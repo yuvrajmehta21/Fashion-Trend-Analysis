@@ -1,0 +1,15 @@
+# Fashion Trend Analysis — Python dependencies.
+# Install into a project-local venv:  python3 -m venv .venv && . .venv/bin/activate && pip install -r requirements.txt
+
+# --- Core (scraping, config, trends, PDF) ---------------------------------
+requests           # HTTP for the Shopify products.json scrape
+PyYAML             # read config/competitors.yaml
+pandas             # trend counting / scoring over time
+playwright         # render the weekly PDF via headless Chromium (run: playwright install chromium)
+Pillow             # image handling for tagging + PDF
+
+# --- Local garment tagging (FashionCLIP, free, runs on CPU) ---------------
+# FashionCLIP is a CLIP model fine-tuned on fashion. We load it through the
+# transformers library (checkpoint: patrickjohncyh/fashion-clip).
+torch              # FashionCLIP backend (CPU is fine for our volumes)
+transformers       # loads the FashionCLIP checkpoint + processor
