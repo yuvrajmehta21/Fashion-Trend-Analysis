@@ -263,9 +263,9 @@ def _search_pages(data: dict) -> str:
     note = ('<p class="section-note">Google Trends search interest in India (0–100), with '
             '14-day velocity. A lagging / confirmation signal — it shows what shoppers are '
             'already searching, useful to corroborate a trend rather than discover it.</p>')
-    # up to ~10 bars per page
+    # 8 bars per page so rows never compress/overlap on the fixed-height page
     pages = []
-    per = 10
+    per = 8
     for i in range(0, len(bars), per):
         body = "".join(bars[i:i+per])
         head = note if i == 0 else ""
@@ -381,7 +381,7 @@ html,body { margin:0; font-family:var(--sans); font-weight:300; color:var(--ink)
 .attr-title { font-family:var(--serif); font-weight:400; font-size:22pt; color:var(--ink);
   margin:0 0 6mm; }
 .bar-row { display:grid; grid-template-columns:55mm 1fr 34mm; align-items:center; gap:6mm;
-  padding:2.2mm 0; border-bottom:.3pt solid var(--hairline); }
+  padding:2.2mm 0; border-bottom:.3pt solid var(--hairline); flex-shrink:0; }
 .bar-label { font-size:10pt; color:var(--ink-soft); text-transform:capitalize; }
 .bar-track { height:5mm; background:var(--tile); border-radius:3mm; overflow:hidden; }
 .bar-fill { height:100%; background:linear-gradient(90deg,var(--sand),var(--accent)); }
@@ -398,7 +398,8 @@ html,body { margin:0; font-family:var(--sans); font-weight:300; color:var(--ink)
 /* section explanatory note */
 .section-note { font-family:var(--serif); font-style:italic; font-size:11pt; color:var(--muted);
   line-height:1.5; max-width:210mm; margin:0 0 9mm; }
-.search-page { justify-content:flex-start; padding-top:24mm; }
+.search-page { justify-content:flex-start; padding-top:22mm; gap:4mm; }
+.search-page .bar-row { padding:3mm 0; }
 .emerging { color:var(--sand); font-style:italic; font-weight:400; }
 
 /* cross-source rows */
