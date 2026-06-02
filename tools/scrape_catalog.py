@@ -129,6 +129,22 @@ def _min_price(variants: list[dict]) -> float | None:
     return min(prices) if prices else None
 
 
+def _availability(variants: list[dict]) -> dict:
+    """Stock state from per-variant `available` booleans. products.json exposes only
+    the boolean (no inventory counts), so we track how many variants are in stock.
+    Tracked over weeks, this is our sell-through / popularity proxy: a listed product
+    whose variants go from available → unavailable is selling through."""
+    total = len(variants or [])
+    avail = sum(1 for v in (variants or []) if v.get("available"))
+    return {
+        "variants_total":     total,
+        "variants_available": avail,
+        "in_stock":           avail > 0,
+        # fraction of sizes/colours still buyable (1.0 = fully stocked, 0.0 = sold out)
+        "stock_ratio":        round(avail / total, 3) if total else None,
+    }
+
+
 def _colors_from_options(options: list[dict]) -> list[str]:
     """Pull the Color option values — a clean, declared color signal from the store."""
     for o in options or []:
@@ -163,6 +179,7 @@ def normalise_product(p: dict, store: dict, currency: tuple[str, str]) -> dict:
         "price":        _min_price(variants),
         "currency":     code,
         "currency_symbol": symbol,
+        **_availability(variants),
         "colors":       _colors_from_options(p.get("options")),
         "tags":         _clean_tags(p.get("tags")),
         "url":          f'{store["base_url"].rstrip("/")}/products/{handle}',

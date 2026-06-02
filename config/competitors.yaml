@@ -38,7 +38,10 @@ stores:
     collections: []
     notes: Our own catalog. NOT a competitor — kept here for reference only, always disabled.
 
-  # --- Starter sample: the two closest comparables. Prove the loop on these. ---
+  # =========================================================================
+  # CORE COMPETITORS — enabled. Closest aesthetic + price-band matches.
+  # All verified Shopify (products.json = 200) June 2026.
+  # =========================================================================
   - key: reistor
     name: Reistor
     base_url: https://reistor.com
@@ -57,12 +60,11 @@ stores:
     collections: []
     notes: Luxury-boho Western; vacation/maxi dresses, kaftans, co-ords. Strong overlap with Vacation Vibes.
 
-  # --- Tier 1, kept off until the loop is proven, then flip enabled: true ------
   - key: azurina
     name: Azurina
     base_url: https://www.azurina.in
     platform: shopify
-    enabled: false
+    enabled: true
     tier: 1
     collections: []
     notes: Resort/vacation cotton-linen dresses & co-ords. Direct match to the island/summer story.
@@ -71,21 +73,42 @@ stores:
     name: Salt Attire
     base_url: https://www.saltattire.com
     platform: shopify
-    enabled: false
+    enabled: true
     tier: 1
     collections: []
     notes: Gurgaon-based contemporary Western (workwear to occasion). Geographic + positioning peer.
 
-  # --- Tier 2: adjacent / aspirational benchmarks ------------------------------
   - key: saaki
     name: Saaki
     base_url: https://saaki.co
     platform: shopify
-    enabled: false
-    tier: 2
+    enabled: true
+    tier: 1
     collections: []
-    notes: Modern womenswear, power dresses & co-ords; leans modern-Indian fusion.
+    notes: Modern womenswear, power dresses & co-ords. Core contemporary-Western match.
 
+  - key: the_summer_house
+    name: The Summer House
+    base_url: https://thesummerhouse.in
+    platform: shopify
+    enabled: true
+    tier: 1
+    collections: []
+    notes: Sustainable contemporary womenswear; organic cotton/linen dresses & co-ords. Strong aesthetic match.
+
+  - key: label_by_mohita
+    name: Label by Mohita
+    base_url: https://labelbymohita.com
+    platform: shopify
+    enabled: true
+    tier: 1
+    collections: []
+    notes: Structured co-ord sets & printed contemporary-Western dresses. Close match.
+
+  # =========================================================================
+  # BENCH — configured but OFF. Flip enabled:true to widen coverage once the
+  # multi-source loop is proven. Span value / core / premium tiers.
+  # =========================================================================
   - key: rareism
     name: Rareism
     base_url: https://rareism.com
@@ -95,11 +118,56 @@ stores:
     collections: []
     notes: Premium Western dresses & co-ords (House of Rare). Aspirational benchmark.
 
-  - key: faballey
-    name: FabAlley
-    base_url: https://www.faballey.com
+  - key: cord
+    name: Cord Studio
+    base_url: https://www.cordstudio.in
     platform: shopify
     enabled: false
     tier: 2
     collections: []
-    notes: Broad Western range incl. workwear; more affordable/mass. Value-tier benchmark.
+    notes: Contemporary printed dresses, co-ords, tunics. Design-led, slightly premium.
+
+  - key: ampm
+    name: AMPM
+    base_url: https://ampm.in
+    platform: shopify
+    enabled: false
+    tier: 2
+    collections: []
+    notes: Designer dresses & refined silhouettes; office/evening. Premium adjacent.
+
+  - key: kazo
+    name: Kazo
+    base_url: https://kazo.com
+    platform: shopify
+    enabled: false
+    tier: 2
+    collections: []
+    notes: Contemporary dresses, jumpsuits, party wear. Core/value Western.
+
+  - key: jovi
+    name: JOVI India
+    base_url: https://www.joviindia.com
+    platform: shopify
+    enabled: false
+    tier: 2
+    collections: []
+    notes: Handmade block-printed Western/fusion; Jaipur. Slow-fashion adjacent.
+
+  - key: doodlage
+    name: Doodlage
+    base_url: https://doodlage.in
+    platform: shopify
+    enabled: false
+    tier: 2
+    collections: []
+    notes: Upcycled/zero-waste contemporary dresses & separates. Eco value-tier.
+
+  - key: chambray_co
+    name: Chambray & Co
+    base_url: https://chambrayandco.in
+    platform: shopify
+    enabled: false
+    tier: 2
+    collections: []
+    notes: Eco-ethical contemporary dresses, limited editions. Value/core.

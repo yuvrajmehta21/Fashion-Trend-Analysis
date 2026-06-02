@@ -71,6 +71,7 @@ def _cover(data: dict) -> str:
     run = html.escape(str(data.get("run_date", "")))
     live = data.get("live_count", 0)
     new = data.get("new_count", 0)
+    selling = data.get("selling_out_count", 0)
     baseline = data.get("is_baseline")
     prev = data.get("previous_date")
     period = ("Baseline edition — first reading"
@@ -90,6 +91,7 @@ def _cover(data: dict) -> str:
     <div class="cover-summary-heading">This edition</div>
     <div class="cover-summary-row"><span class="cat-name">Live items tracked</span><span class="cat-count">{live}</span></div>
     <div class="cover-summary-row"><span class="cat-name">New this week</span><span class="cat-count">{new}</span></div>
+    <div class="cover-summary-row"><span class="cat-name">Selling out</span><span class="cat-count">{selling}</span></div>
   </div>
 </section>
 """
@@ -188,6 +190,122 @@ def _trend_pages(data: dict) -> str:
         '— trends appear from the second weekly run.</div></section>')
 
 
+# ---- Selling out (sell-through / demand proxy) -----------------------------
+
+def _sellout_card(item: dict) -> str:
+    img = _img_data_uri(item.get("image_local"))
+    img_html = (f'<div class="card-img"><img src="{img}"/></div>' if img
+                else '<div class="card-img placeholder"></div>')
+    store = html.escape(str(item.get("store_name") or ""))
+    title = html.escape(str(item.get("title") or "")[:48])
+    sym = html.escape(str(item.get("currency_symbol") or ""))
+    price = item.get("price")
+    price_html = f'<div class="card-price">{sym}{int(price):,}</div>' if price else ""
+    drop = item.get("stock_drop")
+    now_ratio = item.get("now_ratio")
+    if now_ratio == 0.0:
+        badge = "SOLD OUT"
+    elif drop is not None:
+        badge = f"−{round(drop*100)}% sizes available"
+    else:
+        badge = ""
+    badge_html = f'<div class="sellout-badge">{badge}</div>' if badge else ""
+    attrs = item.get("attributes") or {}
+    return f"""
+<div class="card">
+  {img_html}
+  {badge_html}
+  <div class="card-store">{store}</div>
+  <div class="card-title">{title}</div>
+  {price_html}
+  <div class="card-attrs">{html.escape(_attr_line(attrs))}</div>
+</div>
+"""
+
+
+def _selling_out_pages(data: dict) -> str:
+    items = data.get("selling_out", [])
+    if not items:
+        return ('<section class="grid-page"><div class="empty-note">No clear sell-through '
+                'signal this week — items selling out appear once stock changes between '
+                'runs (from the second weekly run onward).</div></section>')
+    pages = []
+    for start in range(0, len(items), GRID_PER_PAGE):
+        cards = "".join(_sellout_card(it) for it in items[start:start + GRID_PER_PAGE])
+        pages.append(f'<section class="grid-page"><div class="grid">{cards}</div></section>')
+    return "".join(pages)
+
+
+# ---- Search interest (Google Trends) ---------------------------------------
+
+def _search_pages(data: dict) -> str:
+    kws = data.get("search_keywords") or {}
+    if not kws:
+        return ""   # google_trends didn't run this cycle — omit the section entirely
+    # sort: real movers first (by velocity), low-volume emerging terms after
+    rows = []
+    for term, kd in kws.items():
+        rows.append((term, kd.get("interest") or 0, kd.get("velocity"), kd.get("low_volume")))
+    rows.sort(key=lambda r: (r[2] is not None, r[2] or -1), reverse=True)
+
+    bars = []
+    for term, interest, vel, low in rows:
+        width = max(2, round(min(interest, 100)))
+        if low or vel is None or (interest or 0) < 10:
+            metric = '<span class="metric"><span class="emerging">emerging · low volume</span></span>'
+        else:
+            sign = "+" if vel >= 0 else ""
+            metric = f'<span class="metric">{interest:.0f}/100 <span class="delta">({sign}{vel:.0%})</span></span>'
+        bars.append(
+            f'<div class="bar-row"><div class="bar-label">{html.escape(term)}</div>'
+            f'<div class="bar-track"><div class="bar-fill" style="width:{width}%"></div></div>'
+            f'{metric}</div>')
+    note = ('<p class="section-note">Google Trends search interest in India (0–100), with '
+            '14-day velocity. A lagging / confirmation signal — it shows what shoppers are '
+            'already searching, useful to corroborate a trend rather than discover it.</p>')
+    # up to ~10 bars per page
+    pages = []
+    per = 10
+    for i in range(0, len(bars), per):
+        body = "".join(bars[i:i+per])
+        head = note if i == 0 else ""
+        pages.append(f'<section class="trend-page search-page">{head}{body}</section>')
+    return "".join(pages)
+
+
+# ---- Cross-source corroboration --------------------------------------------
+
+def _cross_source_page(data: dict) -> str:
+    cs = data.get("cross_source") or []
+    if not cs:
+        return ""
+    def fmt(c):
+        term = html.escape(str(c["term"]))
+        vel = c.get("search_velocity")
+        interest = c.get("search_interest") or 0
+        if vel is None or interest < 10:
+            sv = "emerging"   # too little volume to trust a percentage
+        else:
+            sv = f"{'+' if vel>=0 else ''}{vel:.0%}"
+        cd = c.get("catalog_delta")
+        cd_s = (f"+{cd:.0%}" if (cd is not None and cd > 0) else
+                ("in sell-through" if c.get("in_sellthrough") else "—"))
+        cls = "corro yes" if c["corroborated"] else "corro"
+        mark = "✓ corroborated" if c["corroborated"] else ""
+        return (f'<div class="{cls}"><div class="corro-term">{term}</div>'
+                f'<div class="corro-cell">search {sv}</div>'
+                f'<div class="corro-cell">catalog {cd_s}</div>'
+                f'<div class="corro-mark">{mark}</div></div>')
+    rows = "".join(fmt(c) for c in cs[:12])
+    note = ('<p class="section-note">Where the demand signal (search) and the supply signal '
+            '(competitor catalogs / sell-through) point the same way. Corroborated rows are '
+            'the highest-confidence trends.</p>')
+    header = ('<div class="corro head"><div class="corro-term">Style keyword</div>'
+              '<div class="corro-cell">Search</div><div class="corro-cell">Catalog</div>'
+              '<div class="corro-mark"></div></div>')
+    return f'<section class="trend-page"><h2 class="attr-title">Cross-source trends</h2>{note}{header}{rows}</section>'
+
+
 # ---------------------------------------------------------------------------
 # CSS — Style Island brand palette (warm sand / clay / terracotta)
 # ---------------------------------------------------------------------------
@@ -271,6 +389,28 @@ html,body { margin:0; font-family:var(--sans); font-weight:300; color:var(--ink)
 .delta { color:var(--accent-deep); font-weight:500; }
 .empty-note { font-family:var(--serif); font-style:italic; font-size:16pt; color:var(--muted);
   text-align:center; margin-top:80mm; }
+
+/* sell-out badge on a card */
+.sellout-badge { font-size:7pt; font-weight:500; letter-spacing:.15em; text-transform:uppercase;
+  color:#fff; background:var(--accent-deep); display:inline-block; padding:1mm 2mm;
+  border-radius:1mm; margin-top:2.5mm; align-self:flex-start; }
+
+/* section explanatory note */
+.section-note { font-family:var(--serif); font-style:italic; font-size:11pt; color:var(--muted);
+  line-height:1.5; max-width:210mm; margin:0 0 9mm; }
+.search-page { justify-content:flex-start; padding-top:24mm; }
+.emerging { color:var(--sand); font-style:italic; font-weight:400; }
+
+/* cross-source rows */
+.corro { display:grid; grid-template-columns:70mm 40mm 40mm 1fr; align-items:center;
+  gap:5mm; padding:2.6mm 0; border-bottom:.3pt solid var(--hairline); }
+.corro.head { color:var(--accent); font-size:8.5pt; font-weight:500; letter-spacing:.2em;
+  text-transform:uppercase; border-bottom:.6pt solid var(--accent); }
+.corro.yes { background:linear-gradient(90deg, rgba(201,123,110,.10), transparent); }
+.corro-term { font-family:var(--serif); font-size:13pt; color:var(--ink); }
+.corro-cell { font-size:9.5pt; color:var(--ink-soft); }
+.corro-mark { font-size:8.5pt; font-weight:500; letter-spacing:.1em; text-transform:uppercase;
+  color:var(--accent-deep); text-align:right; }
 """
 
 
@@ -281,13 +421,31 @@ def build_html(data: dict) -> str:
     trend_title = "Current Snapshot" if baseline else "Rising Attributes"
     trend_sub = ("Where the live catalog sits today" if baseline
                  else "Gaining share versus last week")
+    selling_count = data.get("selling_out_count", 0)
+    has_search = bool(data.get("search_keywords"))
+    has_cross = bool(data.get("cross_source"))
+
+    # Search-interest + cross-source sections only appear when google_trends ran.
+    search_block = ""
+    if has_search:
+        search_block = (_section_divider("Search Interest", "What shoppers are searching for")
+                        + _search_pages(data))
+    cross_block = ""
+    if has_cross:
+        cross_block = (_section_divider("Cross-Source", "Demand meets supply")
+                       + _cross_source_page(data))
+
     return f"""<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">
 <title>Style Island Trend Report {run}</title><style>{CSS}</style></head><body>
 {_cover(data)}
 {_section_divider("New This Week", f"{new_count} newly dropped garments")}
 {_new_this_week_pages(data)}
+{_section_divider("Selling Out", f"{selling_count} garments moving fast")}
+{_selling_out_pages(data)}
 {_section_divider(trend_title, trend_sub)}
 {_trend_pages(data)}
+{search_block}
+{cross_block}
 </body></html>"""
 
 

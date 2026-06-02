@@ -12,11 +12,22 @@ work, and an agent orchestrates.
 > (polite scraping, dated JSON in `.tmp/`, the editorial PDF builder) but shares no
 > code — both may later pull common bits into shared helpers.
 
-## Build #1 — Competitor Catalog Tracker
+## Multi-Source Competitor Trend Tracker
 
-Each week: scrape competitor catalogs → tag every garment with **FashionCLIP** (local,
-free) → remember each item with its first-seen date → score new + rising attributes
-with **pandas** → render a **PDF** report in Style Island's brand palette.
+Each week, three signal types feed one scoring + report layer:
+
+- **Supply** — scrape ~7 competitor Shopify catalogs → tag every garment with
+  **FashionCLIP** (local, free) → track *new* items + *rising attributes*.
+- **Demand (retail)** — **sell-through**: which listed items go out of stock over time
+  (the real popularity signal; `products.json` has no bestseller rank).
+- **Demand (search)** — **Google Trends** (free) search interest in style keywords.
+
+…then **pandas** scores it all, flags **cross-source** trends (search ⨯ catalog), and a
+**PDF** report renders in Style Island's brand palette: New This Week · Selling Out ·
+Rising Attributes · Search Interest · Cross-Source.
+
+Deferred (needs budget): Instagram/social-image analysis — the official IG API can't see
+competitor posts. See the SOP for the slot-in plan.
 
 See **[workflows/catalog_tracker.md](workflows/catalog_tracker.md)** for the full SOP,
 and **[STYLE_ISLAND_PROFILE.md](STYLE_ISLAND_PROFILE.md)** for the brand profile and
@@ -39,13 +50,15 @@ The report lands at `.tmp/trend_report_<date>.pdf`.
 ## Layout
 
 ```
-config/competitors.yaml   # the competitor store list (edit this; never hardcoded)
-workflows/                # markdown SOPs
-tools/                    # scrape → tag → catalog → trends → pdf
-data/catalog.json         # persistent memory: every item + first_seen (gitignored)
-.tmp/                     # disposable: scrapes, images, logs, the rendered PDF
-run_tracker.sh            # runs the whole weekly pipeline
-STYLE_ISLAND_PROFILE.md   # brand profile + competitor research (reusable)
+config/competitors.yaml     # competitor store list (edit this; never hardcoded)
+config/trend_keywords.yaml   # style keywords tracked in Google Trends
+workflows/                  # markdown SOPs
+tools/                      # scrape → tag → catalog → trends(search) → analyze → pdf
+data/catalog.json           # persistent memory: items + first_seen + stock history (gitignored)
+data/keywords.json          # persistent search-interest history (gitignored)
+.tmp/                       # disposable: scrapes, images, logs, the rendered PDF
+run_tracker.sh              # runs the whole weekly pipeline
+STYLE_ISLAND_PROFILE.md     # brand profile + competitor research (reusable)
 ```
 
 ## Principles

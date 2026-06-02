@@ -68,15 +68,23 @@ run_phase() {
 
     echo ""
     echo "════════════════════════════════════"
-    echo "  4 — ANALYZE trends (pandas)"
+    echo "  4 — SEARCH INTEREST (Google Trends)"
     echo "════════════════════════════════════"
-    run_phase "4" $PY tools/analyze_trends.py
+    # Fail-soft: a Google Trends hiccup must not block the report. analyze_trends
+    # simply omits the search/cross-source sections if this produced nothing.
+    run_phase "4" $PY tools/google_trends.py
 
     echo ""
     echo "════════════════════════════════════"
-    echo "  5 — BUILD weekly PDF report"
+    echo "  5 — ANALYZE trends (pandas)"
     echo "════════════════════════════════════"
-    run_phase "5" $PY tools/build_pdf.py
+    run_phase "5" $PY tools/analyze_trends.py
+
+    echo ""
+    echo "════════════════════════════════════"
+    echo "  6 — BUILD weekly PDF report"
+    echo "════════════════════════════════════"
+    run_phase "6" $PY tools/build_pdf.py
 
     echo ""
     echo "=== Done — $(date) ==="

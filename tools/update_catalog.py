@@ -81,10 +81,18 @@ def main():
             "currency_symbol": p.get("currency_symbol", ""),
             "image_local":  p.get("image_local"),
             "published_at": p.get("published_at"),
+            # current stock state (sell-through proxy)
+            "in_stock":           p.get("in_stock"),
+            "stock_ratio":        p.get("stock_ratio"),
+            "variants_total":     p.get("variants_total"),
+            "variants_available": p.get("variants_available"),
             # tagged attributes
             "attributes":   p.get("attributes"),
             "needs_review": p.get("needs_review", False),
         }
+        # One stock reading per run, so sell-through can be measured over time.
+        stock_point = {"date": run_date, "stock_ratio": p.get("stock_ratio"),
+                       "in_stock": p.get("in_stock")}
         if pid in items:
             existing = items[pid]
             existing.update(record)                       # refresh facts/tags
@@ -94,12 +102,14 @@ def main():
             # even after later runs touch the item — needed for share-over-time.
             if run_date not in existing.setdefault("seen_dates", []):
                 existing["seen_dates"].append(run_date)
+            existing.setdefault("stock_history", []).append(stock_point)
             returning_ids.append(pid)
         else:
             record["first_seen"] = run_date
             record["last_seen"]  = run_date
             record["seen_count"] = 1
             record["seen_dates"] = [run_date]
+            record["stock_history"] = [stock_point]
             items[pid] = record
             new_ids.append(pid)
 

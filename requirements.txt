@@ -3,10 +3,11 @@
 
 # --- Core (scraping, config, trends, PDF) ---------------------------------
 requests           # HTTP for the Shopify products.json scrape
-PyYAML             # read config/competitors.yaml
+PyYAML             # read config/competitors.yaml + trend_keywords.yaml
 pandas             # trend counting / scoring over time
 playwright         # render the weekly PDF via headless Chromium (run: playwright install chromium)
 Pillow             # image handling for tagging + PDF
+pytrends           # free Google Trends search-interest signal (no API key)
 
 # --- Local garment tagging (FashionCLIP, free, runs on CPU) ---------------
 # FashionCLIP is a CLIP model fine-tuned on fashion. We load it through the

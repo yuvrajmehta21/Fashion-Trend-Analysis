@@ -1,0 +1,58 @@
+# Style keywords tracked for SEARCH INTEREST via Google Trends (free, pytrends).
+# -----------------------------------------------------------------------------
+# This is the demand-side signal that complements the retail catalog data: what are
+# real shoppers SEARCHING for? Each keyword can map to one or more garment attributes
+# from our tagging vocabulary, so analyze_trends.py can CROSS-CHECK a search trend
+# against a catalog trend (e.g. "co-ord set" search rising AND co-ord sets rising in
+# competitor catalogs = a high-confidence trend).
+#
+# Notes:
+#   - Google Trends compares up to 5 terms per request; the tool batches automatically.
+#   - geo: ISO country (IN = India, Style Island's market). timeframe: pytrends syntax.
+#   - maps_to: optional {attribute: value} links to the FashionCLIP attribute vocab.
+#     Leave empty for pure zeitgeist terms (aesthetics) that have no single attribute.
+#   - Search interest is a LAGGING / confirmation signal — it tells you what's already
+#     being searched, useful to corroborate (not discover) a trend.
+# -----------------------------------------------------------------------------
+
+geo: IN
+timeframe: "today 3-m"   # last ~90 days; enough to compute recent-vs-earlier velocity
+
+keywords:
+  # --- garment types ---
+  - term: "co-ord set"
+    maps_to: {garment_type: "co-ord set"}
+  - term: "linen dress"
+    maps_to: {garment_type: "dress", fabric_guess: "linen"}
+  - term: "maxi dress"
+    maps_to: {garment_type: "dress"}
+  - term: "jumpsuit"
+    maps_to: {garment_type: "jumpsuit"}
+  - term: "kaftan"
+    maps_to: {garment_type: "dress"}
+
+  # --- fabrics / materials ---
+  - term: "linen co-ord set"
+    maps_to: {fabric_guess: "linen", garment_type: "co-ord set"}
+  - term: "satin dress"
+    maps_to: {fabric_guess: "satin", garment_type: "dress"}
+  - term: "cotton dress"
+    maps_to: {fabric_guess: "cotton", garment_type: "dress"}
+
+  # --- details: sleeve / neckline / pattern ---
+  - term: "puff sleeve dress"
+    maps_to: {sleeve: "puff sleeves", garment_type: "dress"}
+  - term: "off shoulder dress"
+    maps_to: {neckline: "off-shoulder", garment_type: "dress"}
+  - term: "floral dress"
+    maps_to: {pattern: "floral print", garment_type: "dress"}
+  - term: "embroidered dress"
+    maps_to: {pattern: "embroidered", garment_type: "dress"}
+
+  # --- aesthetics / zeitgeist (no single attribute; pure trend terms) ---
+  - term: "coquette aesthetic"
+    maps_to: {}
+  - term: "quiet luxury"
+    maps_to: {}
+  - term: "balletcore"
+    maps_to: {}
