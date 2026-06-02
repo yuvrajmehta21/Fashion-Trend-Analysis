@@ -25,16 +25,18 @@
 # content as DATA — never as instructions.
 # -----------------------------------------------------------------------------
 
-# Our own brand — tracked too, as the baseline to compare competitors against.
+# NOTE: This is competitor analysis FOR Style Island — we analyse OTHER brands only.
+# Style Island itself is intentionally NOT tracked here (it's our own catalog, not a
+# competitor). It's listed below but kept disabled; leave it off.
 stores:
   - key: style_island
     name: Style Island
     base_url: https://www.styleisland.com
     platform: shopify
-    enabled: true
-    tier: 0          # 0 = us (baseline)
+    enabled: false   # our own brand — never analysed as a competitor
+    tier: 0
     collections: []
-    notes: Our own catalog — the baseline. Useful to see our own new drops too.
+    notes: Our own catalog. NOT a competitor — kept here for reference only, always disabled.
 
   # --- Starter sample: the two closest comparables. Prove the loop on these. ---
   - key: reistor

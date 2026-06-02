@@ -57,6 +57,21 @@ PAGE_SIZE = 250          # Shopify products.json max page size
 REQUEST_DELAY = 1.5      # seconds between requests — slow and polite
 IMAGE_WIDTH = 700        # Shopify CDN resize width for downloaded images
 
+# Currency symbols by ISO code (stores differ: reistor.com is USD, shopverb is INR).
+CURRENCY_SYMBOLS = {"INR": "₹", "USD": "$", "EUR": "€", "GBP": "£", "AUD": "A$", "CAD": "C$"}
+
+
+def fetch_currency(base_url: str) -> tuple[str, str]:
+    """Read a Shopify store's currency from /meta.json. Returns (code, symbol)."""
+    try:
+        r = requests.get(base_url.rstrip("/") + "/meta.json", headers=HEADERS, timeout=20)
+        code = (r.json().get("currency") or "").upper()
+        if code:
+            return code, CURRENCY_SYMBOLS.get(code, code + " ")
+    except Exception:
+        pass
+    return "", ""
+
 
 # ---------------------------------------------------------------------------
 # Config
@@ -131,11 +146,12 @@ def _resize_src(src: str, width: int) -> str:
     return f"{stem}_{width}x{ext}{query}"
 
 
-def normalise_product(p: dict, store: dict) -> dict:
+def normalise_product(p: dict, store: dict, currency: tuple[str, str]) -> dict:
     variants = p.get("variants") or []
     images = p.get("images") or []
     image_url = images[0]["src"] if images else None
     handle = p.get("handle", "")
+    code, symbol = currency
     return {
         "store_key":    store["key"],
         "store_name":   store["name"],
@@ -145,6 +161,8 @@ def normalise_product(p: dict, store: dict) -> dict:
         "product_type": p.get("product_type", ""),
         "vendor":       p.get("vendor", ""),
         "price":        _min_price(variants),
+        "currency":     code,
+        "currency_symbol": symbol,
         "colors":       _colors_from_options(p.get("options")),
         "tags":         _clean_tags(p.get("tags")),
         "url":          f'{store["base_url"].rstrip("/")}/products/{handle}',
@@ -212,6 +230,9 @@ def scrape_store(store: dict, limit: int | None) -> list[dict]:
         print("   skip — robots.txt disallows /products.json")
         return []
 
+    currency = fetch_currency(base)
+    print(f"   currency: {currency[0] or 'unknown'}")
+
     collections = store.get("collections") or [None]
     raw: list[dict] = []
     seen_ids: set = set()
@@ -229,7 +250,7 @@ def scrape_store(store: dict, limit: int | None) -> list[dict]:
             print(f"   {label}: ! error {e}")
         time.sleep(REQUEST_DELAY)
 
-    products = [normalise_product(p, store) for p in raw]
+    products = [normalise_product(p, store, currency) for p in raw]
 
     # Download the primary image per product (garment tagging input).
     print(f"   downloading {len(products)} primary images ...")

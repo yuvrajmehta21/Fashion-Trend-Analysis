@@ -40,7 +40,7 @@ ATTR_LABEL = {
     "pattern":      "Pattern",
     "fabric_guess": "Fabric (guess)",
 }
-GRID_PER_PAGE = 9   # 3 × 3 cards per "New This Week" page
+GRID_PER_PAGE = 6   # 2 rows × 3 cols per "New This Week" page (fits A4 landscape cleanly)
 
 
 # ---------------------------------------------------------------------------
@@ -121,7 +121,8 @@ def _new_card(item: dict) -> str:
     store = html.escape(str(item.get("store_name") or ""))
     title = html.escape(str(item.get("title") or "")[:48])
     price = item.get("price")
-    price_html = f'<div class="card-price">₹{int(price):,}</div>' if price else ""
+    sym = html.escape(str(item.get("currency_symbol") or ""))
+    price_html = f'<div class="card-price">{sym}{int(price):,}</div>' if price else ""
     attrs = item.get("attributes") or {}
     return f"""
 <div class="card">
@@ -235,20 +236,25 @@ html,body { margin:0; font-family:var(--sans); font-weight:300; color:var(--ink)
 .divider-name { font-family:var(--serif); font-weight:300; font-size:78pt; letter-spacing:.06em;
   margin:0; text-align:center; }
 
-/* New-this-week grid */
-.grid-page { width:297mm; height:210mm; padding:16mm 20mm; page-break-after:always; }
-.grid { display:grid; grid-template-columns:repeat(3,1fr); grid-template-rows:repeat(3,1fr);
-  gap:8mm; height:100%; }
-.card { display:flex; flex-direction:column; }
-.card-img { flex:1; overflow:hidden; background:var(--tile); border-radius:1mm; }
-.card-img img { width:100%; height:100%; object-fit:cover; display:block; }
+/* New-this-week grid — fixed card dimensions (deterministic in paged media, no
+   height:100%/1fr/flex tricks that overflow when rendered to PDF). */
+.grid-page { width:297mm; height:210mm; padding:16mm 22mm; page-break-after:always; }
+.grid { display:grid; grid-template-columns:repeat(3,1fr); column-gap:10mm; row-gap:7mm; }
+.card { display:flex; flex-direction:column; overflow:hidden; }
+/* object-position:center favours the garment/torso over the model's head — we read
+   the clothing, not the person. */
+.card-img { height:54mm; overflow:hidden; background:var(--tile); border-radius:1mm; }
+.card-img img { width:100%; height:100%; object-fit:cover; object-position:center;
+  display:block; }
 .card-img.placeholder { background:var(--tile); }
-.card-store { font-size:7pt; font-weight:500; letter-spacing:.25em; text-transform:uppercase;
-  color:var(--accent); margin-top:2.5mm; }
-.card-title { font-family:var(--serif); font-size:11pt; line-height:1.15; color:var(--ink);
-  margin-top:1mm; }
-.card-price { font-size:8.5pt; color:var(--ink); margin-top:.5mm; }
-.card-attrs { font-size:7pt; color:var(--muted); margin-top:1mm; line-height:1.3; }
+.card-store { font-size:7.5pt; font-weight:500; letter-spacing:.25em; text-transform:uppercase;
+  color:var(--accent); margin-top:3mm; }
+.card-title { font-family:var(--serif); font-size:12pt; line-height:1.15; color:var(--ink);
+  margin-top:1.5mm; height:12mm; overflow:hidden; display:-webkit-box; -webkit-line-clamp:2;
+  -webkit-box-orient:vertical; }
+.card-price { font-size:9.5pt; color:var(--ink); margin-top:1mm; }
+.card-attrs { font-size:7.5pt; color:var(--muted); margin-top:1.5mm; line-height:1.35;
+  height:8mm; overflow:hidden; }
 
 /* Rising / snapshot bars */
 .trend-page { width:297mm; height:210mm; padding:20mm 26mm; page-break-after:always;

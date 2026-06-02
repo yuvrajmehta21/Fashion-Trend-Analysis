@@ -149,3 +149,13 @@ playwright install chromium
   were shown as full outfits on a model; fixed by sourcing `garment_type` from the
   store's `product_type` and reserving FashionCLIP for the visual attributes. Added
   `seen_dates` to the catalog so historical run snapshots reconstruct correctly.
+- 2026-06-02: Scope + PDF fixes. (1) Style Island is our own brand, not a competitor —
+  disabled in config so only competitors are analysed. (2) PDF grid overflowed in
+  paged rendering: the `height:100%`/`1fr`/`flex:1` card layout clipped the 3rd row,
+  losing items. Replaced with fixed card dimensions at 6 cards/page (2×3) — nothing
+  clips regardless of item count. (3) Currency was hardcoded `₹`; stores differ
+  (reistor.com is USD, shopverb is INR). Now read per store from `/meta.json` and
+  carried through to the report. (4) Image crops favoured the model's head; switched
+  to `object-position:center` so the frame reads the garment, not the person.
+  Tip: render the actual PDF to PNG with `pymupdf` to verify layout — HTML element
+  screenshots hide paged-media overflow bugs.

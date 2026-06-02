@@ -78,6 +78,7 @@ def main():
             "title":        p.get("title"),
             "url":          p.get("url"),
             "price":        p.get("price"),
+            "currency_symbol": p.get("currency_symbol", ""),
             "image_local":  p.get("image_local"),
             "published_at": p.get("published_at"),
             # tagged attributes

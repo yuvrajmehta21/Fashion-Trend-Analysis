@@ -48,6 +48,7 @@ def _items_df(catalog: dict) -> pd.DataFrame:
             "title":       it.get("title"),
             "url":         it.get("url"),
             "price":       it.get("price"),
+            "currency_symbol": it.get("currency_symbol", ""),
             "image_local": it.get("image_local"),
             "first_seen":  it.get("first_seen"),
             "last_seen":   it.get("last_seen"),
