@@ -14,6 +14,7 @@ recent output of the previous step in `.tmp/`), or stand alone.
 | `update_social.py` | Aggregate tagged social posts into engagement-weighted memory (likes+comments, weighted by source). Enables emerging-trend velocity. | `.tmp/tagged_social_<date>.json` | `data/social_history.json` |
 | `analyze_trends.py` | pandas: new-this-week, rising attributes, sell-through, search velocity, **social emerging** (engagement velocity), cross-source corroboration. Runs even with an empty catalog (social can stand alone). | `data/catalog.json`, `data/social_history.json`, `.tmp/keywords_<date>.json` | `.tmp/trends_<date>.json` |
 | `build_pdf.py` | Render the weekly PDF report via headless Chromium (HTML preview alongside). Includes the Social / Emerging section when a social run exists. | `.tmp/trends_<date>.json` | `.tmp/trend_report_<date>.pdf` |
+| `send_email.py` | Email the latest PDF via Gmail SMTP. **Gated** on `REPORT_SHARING_ENABLED=true` (else previews). `--dry-run` to preview. Fail-soft. | `.tmp/trend_report_<date>.pdf`, `.env` (email vars) | (sends email) |
 
 Common flags: `--limit N` (scrape cap), `--store KEY` (scrape one store),
 `--social` (tag Instagram instead of a catalog), `--threshold` (tag review cutoff),

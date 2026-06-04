@@ -110,6 +110,13 @@ run_phase() {
     run_phase "6" "$PY" tools/build_pdf.py
 
     echo ""
+    echo "════════════════════════════════════"
+    echo "  7 — EMAIL the report (gated)"
+    echo "════════════════════════════════════"
+    # Self-gates on REPORT_SHARING_ENABLED=true; otherwise previews and exits 0.
+    run_phase "7" "$PY" tools/send_email.py
+
+    echo ""
     echo "=== Done — $(date) ==="
     echo "Report → .tmp/trend_report_${DATE}.pdf"
 } 2>&1 | tee -a "$LOG_FILE"
