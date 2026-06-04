@@ -74,6 +74,29 @@ run_phase() {
     # simply omits the search/cross-source sections if this produced nothing.
     run_phase "4" $PY tools/google_trends.py
 
+    # Optional SOCIAL layer (Instagram via Apify). Opt in with SOCIAL=1 — it spends
+    # Apify credit (~$0.66/run at the current source list), so it's off by default and
+    # kept out of plain catalog-only test runs. Each step is fail-soft.
+    if [[ -n "${SOCIAL:-}" ]]; then
+        echo ""
+        echo "════════════════════════════════════"
+        echo "  S1 — SCRAPE Instagram (Apify)"
+        echo "════════════════════════════════════"
+        run_phase "S1" $PY tools/scrape_instagram.py
+
+        echo ""
+        echo "════════════════════════════════════"
+        echo "  S2 — TAG social images (FashionCLIP)"
+        echo "════════════════════════════════════"
+        run_phase "S2" $PY tools/tag_garments.py --social
+
+        echo ""
+        echo "════════════════════════════════════"
+        echo "  S3 — UPDATE social engagement memory"
+        echo "════════════════════════════════════"
+        run_phase "S3" $PY tools/update_social.py
+    fi
+
     echo ""
     echo "════════════════════════════════════"
     echo "  5 — ANALYZE trends (pandas)"

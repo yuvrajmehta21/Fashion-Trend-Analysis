@@ -28,8 +28,17 @@ calls any external API.
 ETHICS / SCOPE: garments only. We tag the CLOTHING in the image. No face detection,
 no person identification, no identity stored. Any person in the photo is ignored.
 
-Input:  .tmp/scraped_<date>.json   (from scrape_catalog.py)
-Output: .tmp/tagged_<date>.json
+Two input modes (same model, same attribute logic):
+  * CATALOG (default):  .tmp/scraped_<date>.json   → .tmp/tagged_<date>.json
+      garment_type/color come from store metadata; FashionCLIP fills the rest.
+  * SOCIAL  (Instagram): .tmp/instagram_<date>.json → .tmp/tagged_social_<date>.json
+      no store metadata, so ALL attributes (incl. garment_type/color) come from
+      FashionCLIP off the post image. Auto-detected from the filename / `posts` key,
+      or forced with --social. Social images are noisier than clean product shots,
+      so expect lower confidence and more needs_review — that's expected and honest.
+
+The input mode is auto-detected: a file named `instagram_*` or one whose JSON has a
+top-level `posts` list is treated as social; otherwise catalog.
 """
 
 from __future__ import annotations
@@ -177,93 +186,141 @@ def tag_image(image_path: Path, model, processor, torch, label_cache) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Tag one record (works for a catalog product OR a social post)
+# ---------------------------------------------------------------------------
+
+def tag_record(rec: dict, model, processor, torch, label_cache, threshold: float,
+               *, product_type: str | None, declared_color: str | None) -> bool:
+    """Tag a single record in place. Returns True if tagged, False if the image was
+    missing. For social posts, pass product_type=None and declared_color=None so
+    garment_type and color both come from FashionCLIP."""
+    local = rec.get("image_local")
+    if not local or not (ROOT / local).exists():
+        rec["attributes"] = None
+        rec["needs_review"] = True
+        return False
+
+    attrs = tag_image(ROOT / local, model, processor, torch, label_cache)
+
+    # --- garment_type: authoritative product_type first, FashionCLIP fallback ---
+    canonical = normalise_type(product_type or "")
+    if canonical:
+        garment_type, type_source = canonical, "product_type"
+    else:
+        garment_type, type_source = attrs["garment_type"], "fashionclip"
+
+    # --- color: store's declared colour, normalised to a base; else FashionCLIP ---
+    base = base_color_from(declared_color) if declared_color else None
+    if base:
+        color, color_source = base, "store"
+    else:
+        color, color_source = attrs["color"], "fashionclip"
+
+    rec["attributes"] = {
+        "garment_type": garment_type,
+        "color":        color,
+        "neckline":     attrs["neckline"],
+        "sleeve":       attrs["sleeve"],
+        "pattern":      attrs["pattern"],
+        "fabric_guess": attrs["fabric"],
+    }
+    rec["attribute_sources"] = {
+        "garment_type": type_source,
+        "color":        color_source,
+        "color_raw":    declared_color or "",
+    }
+    rec["attribute_confidence"] = {
+        k: attrs[f"{k}_confidence"]
+        for k in ("garment_type", "neckline", "sleeve", "pattern", "fabric")
+    }
+    # Flag for review only when garment_type leaned on FashionCLIP and it was unsure.
+    rec["needs_review"] = (
+        type_source == "fashionclip"
+        and attrs["garment_type_confidence"] < threshold
+    )
+    return True
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
+
+def _resolve_input(arg_input: Path | None, social: bool) -> tuple[Path, bool]:
+    """Pick the input file and decide catalog-vs-social mode."""
+    if arg_input:
+        is_social = social or arg_input.name.startswith("instagram") or \
+            "posts" in json.loads(arg_input.read_text())
+        return arg_input, is_social
+    if social:
+        files = sorted(TMP.glob("instagram_*.json"), reverse=True)
+        if not files:
+            print("ERROR: no instagram_*.json in .tmp/ — run scrape_instagram.py first.")
+            sys.exit(1)
+        return files[0], True
+    files = sorted(TMP.glob("scraped_*.json"), reverse=True)
+    if not files:
+        print("ERROR: no scraped_*.json in .tmp/ — run scrape_catalog.py first.")
+        sys.exit(1)
+    return files[0], False
+
 
 def main():
     parser = argparse.ArgumentParser(description="Tag garment attributes with FashionCLIP.")
     parser.add_argument("--input", type=Path,
-                        help="scraped_<date>.json (default: most recent in .tmp/).")
+                        help="scraped_<date>.json or instagram_<date>.json "
+                             "(default: most recent of the chosen mode in .tmp/).")
+    parser.add_argument("--social", action="store_true",
+                        help="Tag Instagram posts (instagram_<date>.json) instead of a catalog.")
     parser.add_argument("--threshold", type=float, default=0.35,
                         help="garment_type confidence below this flags needs_review.")
     args = parser.parse_args()
 
-    in_file = args.input
-    if not in_file:
-        files = sorted(TMP.glob("scraped_*.json"), reverse=True)
-        if not files:
-            print("ERROR: no scraped_*.json in .tmp/ — run scrape_catalog.py first.")
-            sys.exit(1)
-        in_file = files[0]
-
-    print(f"Reading: {in_file}")
+    in_file, is_social = _resolve_input(args.input, args.social)
+    print(f"Reading: {in_file}  (mode: {'SOCIAL' if is_social else 'catalog'})")
     data = json.loads(in_file.read_text())
-    products = data.get("products", [])
+    records = data.get("posts", []) if is_social else data.get("products", [])
+    if not records:
+        print("Nothing to tag (no records in input). Exiting.")
+        return
 
     model, processor, torch = load_model()
     label_cache = _encode_label_texts(model, processor, torch)
 
     tagged, reviewed = 0, 0
-    for i, p in enumerate(products, 1):
-        local = p.get("image_local")
-        if not local or not (ROOT / local).exists():
-            p["tags_fashionclip"] = None
-            p["needs_review"] = True
-            continue
-
-        attrs = tag_image(ROOT / local, model, processor, torch, label_cache)
-
-        # --- garment_type: authoritative product_type first, FashionCLIP fallback ---
-        canonical = normalise_type(p.get("product_type", ""))
-        if canonical:
-            garment_type, type_source = canonical, "product_type"
+    for i, rec in enumerate(records, 1):
+        if is_social:
+            ok = tag_record(rec, model, processor, torch, label_cache, args.threshold,
+                            product_type=None, declared_color=None)
         else:
-            garment_type, type_source = attrs["garment_type"], "fashionclip"
+            ok = tag_record(rec, model, processor, torch, label_cache, args.threshold,
+                            product_type=rec.get("product_type", ""),
+                            declared_color=(rec.get("colors") or [None])[0])
+        if ok:
+            tagged += 1
+            if rec.get("needs_review"):
+                reviewed += 1
+        if i % 20 == 0 or i == len(records):
+            print(f"   tagged {i}/{len(records)}")
 
-        # --- color: store's declared colour, normalised to a base; else FashionCLIP ---
-        declared = (p.get("colors") or [None])[0]
-        base = base_color_from(declared) if declared else None
-        if base:
-            color, color_source = base, "store"
-        else:
-            color, color_source = attrs["color"], "fashionclip"
-
-        p["attributes"] = {
-            "garment_type": garment_type,
-            "color":        color,
-            "neckline":     attrs["neckline"],
-            "sleeve":       attrs["sleeve"],
-            "pattern":      attrs["pattern"],
-            "fabric_guess": attrs["fabric"],
+    date_stamp = data.get("scraped_date", TODAY)
+    if is_social:
+        out = {
+            "scraped_date": date_stamp,
+            "tagged_date":  TODAY,
+            "model":        MODEL_NAME,
+            "source":       "instagram",
+            "posts":        records,
         }
-        p["attribute_sources"] = {
-            "garment_type": type_source,
-            "color":        color_source,
-            "color_raw":    declared or "",
+        out_file = TMP / f"tagged_social_{date_stamp}.json"
+    else:
+        out = {
+            "scraped_date": date_stamp,
+            "tagged_date":  TODAY,
+            "model":        MODEL_NAME,
+            "stores":       data.get("stores", []),
+            "products":     records,
         }
-        p["attribute_confidence"] = {
-            k: attrs[f"{k}_confidence"]
-            for k in ("garment_type", "neckline", "sleeve", "pattern", "fabric")
-        }
-        # Flag for review only when garment_type leaned on FashionCLIP and it was unsure.
-        p["needs_review"] = (
-            type_source == "fashionclip"
-            and attrs["garment_type_confidence"] < args.threshold
-        )
-        tagged += 1
-        if p["needs_review"]:
-            reviewed += 1
-        if i % 10 == 0 or i == len(products):
-            print(f"   tagged {i}/{len(products)}")
-
-    out = {
-        "scraped_date": data.get("scraped_date", TODAY),
-        "tagged_date":  TODAY,
-        "model":        MODEL_NAME,
-        "stores":       data.get("stores", []),
-        "products":     products,
-    }
-    out_file = TMP / f"tagged_{data.get('scraped_date', TODAY)}.json"
+        out_file = TMP / f"tagged_{date_stamp}.json"
     out_file.write_text(json.dumps(out, indent=2, ensure_ascii=False))
 
     print(f"\nDone — {tagged} tagged, {reviewed} low-confidence (needs_review).")

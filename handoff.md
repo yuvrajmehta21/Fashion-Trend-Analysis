@@ -269,14 +269,26 @@ Instagram Graph API can't see competitor/influencer posts (kills the trend-leade
    them; verify handles resolve.
 
 ### After social scrape is verified pulling real data
-3. **Run FashionCLIP on social images** (extend `tag_garments.py` to accept the IG input
-   schema — it already tags any image; mainly needs an input adapter).
-4. **Emerging-trend detection** — the actual early-catch logic: score attributes by
-   **velocity from a low base** (small but accelerating engagement), not absolute volume.
-   This is new logic in `analyze_trends.py`.
-5. **Fold social into cross-source** corroboration (social + catalog + search agreeing =
-   highest confidence) and add a **"Social / Emerging" PDF section**.
-6. Add the Instagram phase to `run_tracker.sh`.
+3. ✅ **DONE (2026-06-04): FashionCLIP on social images.** `tag_garments.py --social`
+   added (input adapter for the IG schema; all attrs from the image since there's no
+   store metadata). First run tagged 195 posts, 47 needs_review (~24%, expected for
+   noisier social photos).
+4. ✅ **DONE (2026-06-04): emerging-trend detection.** New `update_social.py` banks an
+   **engagement-weighted** snapshot to `data/social_history.json` (likes+comments,
+   weighted by source so trend-leaders count most). `analyze_trends.py` computes
+   **engagement-share velocity vs the previous social run** + a "from a low base" flag.
+   ⚠️ Needs **2 social runs** to show emergence — run 1 (banked) is a baseline snapshot.
+5. ✅ **DONE (2026-06-04): folded social into cross-source + added the PDF section.**
+   Cross-source now counts agreeing signals (search ⨯ catalog ⨯ social); a keyword is
+   corroborated when search agrees with catalog **or** social momentum. New "Social
+   Snapshot / Emerging on Social" PDF section (engagement bars + a top-posts image grid);
+   layout verified by rendering to PNG (fixed a 6-row overflow → capped to 5 rows/attr).
+6. ✅ **DONE (2026-06-04): social phase wired into `run_tracker.sh`** behind `SOCIAL=1`
+   (off by default — Apify costs ~$0.66/run). `SOCIAL=1 bash run_tracker.sh` runs it all.
+
+### Still to do on social
+- **Bank a 2nd social run** (next week, or a back-dated test) so the emerging/velocity
+  view actually populates — right now it correctly shows a baseline snapshot.
 
 ### Then (productionising)
 7. **Real baseline run** across the 7 brands (no simulation), bank weeks of history.

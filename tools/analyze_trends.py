@@ -33,8 +33,13 @@ import pandas as pd
 ROOT = Path(__file__).parent.parent
 TMP = ROOT / ".tmp"
 CATALOG = ROOT / "data" / "catalog.json"
+SOCIAL_HISTORY = ROOT / "data" / "social_history.json"
 
 ATTRS = ["garment_type", "color", "neckline", "sleeve", "pattern", "fabric_guess"]
+
+_ITEM_COLS = ["product_id", "store_key", "store_name", "title", "url", "price",
+              "currency_symbol", "image_local", "first_seen", "last_seen", "seen_dates",
+              "stock_ratio", "in_stock", "stock_history", *ATTRS]
 
 
 def _items_df(catalog: dict) -> pd.DataFrame:
@@ -58,7 +63,8 @@ def _items_df(catalog: dict) -> pd.DataFrame:
             "stock_history": it.get("stock_history") or [],
             **{a: attrs.get(a) for a in ATTRS},
         })
-    return pd.DataFrame(rows)
+    # explicit columns so an empty catalog still yields a usable (column-bearing) frame
+    return pd.DataFrame(rows, columns=_ITEM_COLS)
 
 
 def _ratio_at(stock_history: list, date: str):
@@ -92,23 +98,141 @@ def _load_keywords(run_date: str) -> dict:
     return {}
 
 
+# ---------------------------------------------------------------------------
+# Social — emerging-trend detection (the early signal)
+# ---------------------------------------------------------------------------
+# An emerging trend is an attribute whose engagement SHARE is accelerating, even from
+# a low base — small but climbing, ahead of the catalog. We measure each value's share
+# of weighted engagement (weng) this run vs last run; positive delta = emerging.
+SOCIAL_LOW_BASE_SHARE = 0.10   # "from a low base": previous engagement share under this
+
+
+def _eng_shares(snapshot_attr: dict) -> tuple[dict, float]:
+    """Given one snapshot's {value: {weng,...}} for an attribute, return
+    {value: eng_share} and the total weighted engagement."""
+    total = sum(c["weng"] for c in snapshot_attr.values()) or 1.0
+    return {v: c["weng"] / total for v, c in snapshot_attr.items()}, total
+
+
+def _social_analysis(run_date: str, top: int) -> dict | None:
+    """Read data/social_history.json and compute, per attribute, what's emerging
+    (engagement-share velocity vs the previous social run) plus a current snapshot.
+    Returns None if there's no social history yet."""
+    if not SOCIAL_HISTORY.exists():
+        return None
+    runs = json.loads(SOCIAL_HISTORY.read_text()).get("runs", [])
+    if not runs:
+        return None
+    dates = [r["date"] for r in runs]
+    idx = dates.index(run_date) if run_date in dates else len(runs) - 1
+    cur = runs[idx]
+    prev = runs[idx - 1] if idx > 0 else None
+    is_baseline = prev is None
+
+    snapshot: dict[str, list] = {}
+    emerging: dict[str, list] = {}
+    value_index: dict = {}   # (attr, value) -> metrics, for cross-source folding
+
+    for attr in ATTRS:
+        cur_attr = cur["attributes"].get(attr, {})
+        cur_share, _ = _eng_shares(cur_attr) if cur_attr else ({}, 1.0)
+        prev_attr = prev["attributes"].get(attr, {}) if prev else {}
+        prev_share, _ = _eng_shares(prev_attr) if prev_attr else ({}, 1.0)
+
+        # current engagement-weighted snapshot (top values now)
+        snap_rows = sorted(cur_attr.items(), key=lambda kv: kv[1]["weng"], reverse=True)
+        snapshot[attr] = [
+            {"value": v, "posts": c["posts"], "engagement": c["engagement"],
+             "eng_share": round(cur_share.get(v, 0.0), 3)}
+            for v, c in snap_rows[:top]
+        ]
+
+        rows = []
+        for v, c in cur_attr.items():
+            cs = cur_share.get(v, 0.0)
+            ps = prev_share.get(v, 0.0)
+            delta = cs - ps
+            metrics = {
+                "value": v, "posts": c["posts"],
+                "eng_share": round(cs, 3), "prev_share": round(ps, 3),
+                "delta": round(delta, 3),
+                "from_low_base": ps < SOCIAL_LOW_BASE_SHARE,
+            }
+            rows.append(metrics)
+            value_index[(attr, v)] = metrics
+        rows.sort(key=lambda r: r["delta"], reverse=True)
+        emerging[attr] = [r for r in rows if r["delta"] > 0][:top] if prev else []
+
+    return {
+        "is_baseline":      is_baseline,
+        "run_date":         cur["date"],
+        "prev_date":        prev["date"] if prev else None,
+        "posts":            cur["posts"],
+        "total_engagement": cur["total_engagement"],
+        "snapshot":         snapshot,
+        "emerging":         emerging,
+        "_value_index":     value_index,
+    }
+
+
+def _social_top_posts(run_date: str, n: int = 12) -> list[dict]:
+    """Top social posts by raw engagement, for the report's visual grid."""
+    path = TMP / f"tagged_social_{run_date}.json"
+    if not path.exists():
+        files = sorted(TMP.glob("tagged_social_*.json"), reverse=True)
+        if not files:
+            return []
+        path = files[0]
+    posts = json.loads(path.read_text()).get("posts", [])
+    scored = []
+    for p in posts:
+        if not p.get("attributes") or not p.get("image_local"):
+            continue
+        eng = (p.get("like_count") or 0) + (p.get("comment_count") or 0)
+        scored.append((eng, p))
+    scored.sort(key=lambda x: x[0], reverse=True)
+    out = []
+    for eng, p in scored[:n]:
+        out.append({
+            "handle":      p.get("source_handle"),
+            "source_type": p.get("source_type"),
+            "weight":      p.get("weight"),
+            "likes":       p.get("like_count"),
+            "comments":    p.get("comment_count"),
+            "engagement":  eng,
+            "image_local": p.get("image_local"),
+            "permalink":   p.get("permalink"),
+            "attributes":  p.get("attributes"),
+        })
+    return out
+
+
 def main():
     parser = argparse.ArgumentParser(description="Compute new + rising trends from the catalog.")
     parser.add_argument("--run-date", help="Run to analyze (default: latest run in catalog).")
     parser.add_argument("--top", type=int, default=6, help="Rising values to keep per attribute.")
     args = parser.parse_args()
 
-    if not CATALOG.exists():
-        print("ERROR: no data/catalog.json — run update_catalog.py first.")
-        return
-    catalog = json.loads(CATALOG.read_text())
+    catalog = json.loads(CATALOG.read_text()) if CATALOG.exists() else {"items": {}, "runs": []}
     runs = catalog.get("runs", [])
-    if not runs:
-        print("ERROR: catalog has no runs recorded.")
+    run_dates = [r["date"] for r in runs]
+
+    # The run we analyze: an explicit --run-date, else the latest catalog run, else the
+    # latest social run (so the social report works before the first competitor run),
+    # else today. The catalog being empty is NOT an error — social can stand alone.
+    social_dates = []
+    if SOCIAL_HISTORY.exists():
+        social_dates = [r["date"] for r in json.loads(SOCIAL_HISTORY.read_text()).get("runs", [])]
+    if args.run_date:
+        run_date = args.run_date
+    elif run_dates:
+        run_date = run_dates[-1]
+    elif social_dates:
+        run_date = social_dates[-1]
+    else:
+        print("ERROR: no catalog runs and no social history — nothing to analyze.")
         return
 
-    run_dates = [r["date"] for r in runs]
-    run_date = args.run_date or run_dates[-1]
     prev_date = None
     if run_date in run_dates:
         idx = run_dates.index(run_date)
@@ -200,6 +324,11 @@ def main():
     rising_lookup = {(attr, r["value"]): r["delta"] for attr in ATTRS for r in rising.get(attr, [])}
     sellthrough_values = {(attr, r["value"]) for attr in ATTRS for r in sell_through_attrs.get(attr, [])}
 
+    # Social signal (engagement velocity) — the earliest, leading source. Its per-value
+    # index lets a keyword's mapped attribute also be corroborated by social momentum.
+    social = _social_analysis(run_date, args.top)
+    social_index = social.pop("_value_index") if social else {}
+
     cross_source = []
     for term, kd in keywords.items():
         maps_to = kd.get("maps_to") or {}
@@ -211,13 +340,20 @@ def main():
         search_rising = (vel is not None and vel > 0 and (kd.get("interest") or 0) >= 10)
         catalog_delta = None
         in_sellthrough = False
+        social_delta = None
         for attr, val in maps_to.items():
             d = rising_lookup.get((attr, val))
             if d is not None and (catalog_delta is None or d > catalog_delta):
                 catalog_delta = d
             if (attr, val) in sellthrough_values:
                 in_sellthrough = True
+            sm = social_index.get((attr, val))
+            if sm and (social_delta is None or sm["delta"] > social_delta):
+                social_delta = sm["delta"]
         catalog_rising = (catalog_delta is not None and catalog_delta > 0) or in_sellthrough
+        social_rising = social_delta is not None and social_delta > 0
+        # Count agreeing signals; the more sources point the same way, the higher confidence.
+        signals = sum([bool(search_rising), bool(catalog_rising), bool(social_rising)])
         cross_source.append({
             "term":            term,
             "search_velocity": vel,
@@ -226,13 +362,19 @@ def main():
             "maps_to":         maps_to,
             "catalog_delta":   catalog_delta,
             "in_sellthrough":  in_sellthrough,
+            "social_delta":    social_delta,
             "search_rising":   search_rising,
             "catalog_rising":  catalog_rising,
-            # corroborated = both demand (search) and supply (catalog) point the same way
-            "corroborated":    bool(search_rising and catalog_rising),
+            "social_rising":   social_rising,
+            "signals":         signals,
+            # corroborated = the demand signal (search) agrees with a supply/leading
+            # signal (catalog/sell-through OR social engagement momentum).
+            "corroborated":    bool(search_rising and (catalog_rising or social_rising)),
         })
-    # corroborated first, then by search velocity
-    cross_source.sort(key=lambda x: (x["corroborated"], x["search_velocity"] or -1), reverse=True)
+    # most agreeing signals first, then corroborated, then by search velocity
+    cross_source.sort(
+        key=lambda x: (x["signals"], x["corroborated"], x["search_velocity"] or -1),
+        reverse=True)
 
     out = {
         "run_date":        run_date,
@@ -250,6 +392,8 @@ def main():
         "sell_through_attrs": sell_through_attrs,
         "search_keywords": keywords,
         "cross_source":    cross_source,
+        "social":          social,
+        "social_top_posts": _social_top_posts(run_date) if social else [],
     }
     out_file = TMP / f"trends_{run_date}.json"
     out_file.write_text(json.dumps(out, indent=2, ensure_ascii=False, default=str))
@@ -257,6 +401,22 @@ def main():
     print(f"Run {run_date} (prev: {prev_date or 'none — baseline'})")
     print(f"  live items: {len(live_now)} | new this week: {len(new_items)} | "
           f"selling through: {len(selling_out_records)}")
+    if social:
+        sb = "baseline" if social["is_baseline"] else f"vs {social['prev_date']}"
+        print(f"  social: {social['posts']} posts ({sb}), "
+              f"engagement {int(social['total_engagement']):,}")
+        if social["is_baseline"]:
+            for attr in ("garment_type", "pattern"):
+                top = social["snapshot"].get(attr, [])[:3]
+                if top:
+                    bits = ", ".join(f"{r['value']} ({r['eng_share']:.0%})" for r in top)
+                    print(f"    social {attr} (engagement share): {bits}")
+        else:
+            for attr in ("garment_type", "pattern", "color"):
+                top = social["emerging"].get(attr, [])[:3]
+                if top:
+                    bits = ", ".join(f"{r['value']} (+{r['delta']:.0%})" for r in top)
+                    print(f"    emerging {attr}: {bits}")
     if not out["is_baseline"]:
         for attr in ATTRS:
             top = rising[attr][:3]

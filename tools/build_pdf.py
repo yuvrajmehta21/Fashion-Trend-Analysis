@@ -306,6 +306,96 @@ def _cross_source_page(data: dict) -> str:
     return f'<section class="trend-page"><h2 class="attr-title">Cross-source trends</h2>{note}{header}{rows}</section>'
 
 
+# ---- Social / emerging (Instagram engagement signal) -----------------------
+
+def _social_bar_row(r: dict, baseline: bool) -> str:
+    value = html.escape(str(r["value"]))
+    share = r.get("eng_share", 0)
+    width = max(2, round(share * 100))
+    if baseline:
+        metric = f'<span class="metric">{share:.0%} <span class="muted-inline">engagement · {r.get("posts",0)} posts</span></span>'
+    else:
+        d = r.get("delta", 0)
+        sign = "+" if d >= 0 else ""
+        low = ' <span class="emerging">· from a low base</span>' if r.get("from_low_base") else ""
+        metric = f'<span class="metric">{share:.0%} <span class="delta">({sign}{d:.0%})</span>{low}</span>'
+    return f"""
+<div class="bar-row">
+  <div class="bar-label">{value}</div>
+  <div class="bar-track"><div class="bar-fill" style="width:{width}%"></div></div>
+  {metric}
+</div>
+"""
+
+
+def _social_bar_pages(social: dict) -> str:
+    baseline = social.get("is_baseline")
+    source = social.get("snapshot") if baseline else social.get("emerging")
+    note = (
+        '<p class="section-note">Engagement-weighted share of attributes across '
+        'trend-leader accounts &amp; hashtags on Instagram (likes + comments, weighted so '
+        'early-adopter brands &amp; influencers count most). This is the leading, noisiest '
+        'signal — directional, to be corroborated against catalog &amp; search.</p>'
+        if baseline else
+        '<p class="section-note">Attributes whose engagement share is <em>accelerating</em> '
+        'week-over-week on trend-leader Instagram — the earliest read on what is gaining '
+        'momentum, ahead of competitor catalogs. "From a low base" = small but climbing fast.</p>')
+    # Cap to 5 rows/attribute: two attribute blocks share a fixed-height page, so the
+    # combined row count must stay within it (6+6 overflowed onto the next page).
+    blocks = []
+    for attr, label in ATTR_LABEL.items():
+        rows = (source or {}).get(attr, [])[:5]
+        if not rows:
+            continue
+        bars = "".join(_social_bar_row(r, baseline) for r in rows)
+        blocks.append(f'<div class="attr-block"><h2 class="attr-title">{label}</h2>{bars}</div>')
+    if not blocks:
+        body = ('<div class="empty-note">No emerging social signal yet — emergence appears '
+                'from the second weekly social run onward.</div>')
+        return f'<section class="trend-page">{note}{body}</section>'
+    pages = []
+    for i in range(0, len(blocks), 2):
+        head = note if i == 0 else ""
+        pages.append(f'<section class="trend-page social-bars">{head}{"".join(blocks[i:i+2])}</section>')
+    return "".join(pages)
+
+
+def _social_post_card(post: dict) -> str:
+    img = _img_data_uri(post.get("image_local"))
+    img_html = (f'<div class="card-img"><img src="{img}"/></div>' if img
+                else '<div class="card-img placeholder"></div>')
+    handle = html.escape(str(post.get("handle") or ""))
+    stype = html.escape(str(post.get("source_type") or "").replace("_", " "))
+    likes = post.get("likes")
+    comments = post.get("comments")
+    eng_bits = []
+    if likes is not None:
+        eng_bits.append(f"{int(likes):,} likes")
+    if comments is not None:
+        eng_bits.append(f"{int(comments):,} comments")
+    eng_html = f'<div class="card-price">{" · ".join(eng_bits)}</div>' if eng_bits else ""
+    attrs = post.get("attributes") or {}
+    tag = "@" + handle if stype != "hashtag" else "#" + handle
+    return f"""
+<div class="card">
+  {img_html}
+  <div class="card-store">{html.escape(tag)} · {stype}</div>
+  <div class="card-attrs social-attrs">{html.escape(_attr_line(attrs))}</div>
+  {eng_html}
+</div>
+"""
+
+
+def _social_post_pages(social_posts: list) -> str:
+    if not social_posts:
+        return ""
+    pages = []
+    for start in range(0, len(social_posts), GRID_PER_PAGE):
+        cards = "".join(_social_post_card(p) for p in social_posts[start:start + GRID_PER_PAGE])
+        pages.append(f'<section class="grid-page"><div class="grid">{cards}</div></section>')
+    return "".join(pages)
+
+
 # ---------------------------------------------------------------------------
 # CSS — Style Island brand palette (warm sand / clay / terracotta)
 # ---------------------------------------------------------------------------
@@ -401,6 +491,12 @@ html,body { margin:0; font-family:var(--sans); font-weight:300; color:var(--ink)
 .search-page { justify-content:flex-start; padding-top:22mm; gap:4mm; }
 .search-page .bar-row { padding:3mm 0; }
 .emerging { color:var(--sand); font-style:italic; font-weight:400; }
+.muted-inline { color:var(--muted); font-size:8.5pt; }
+.social-bars { justify-content:flex-start; padding-top:16mm; gap:9mm; }
+.social-bars .section-note { margin-bottom:6mm; }
+.social-bars .attr-title { margin-bottom:4mm; }
+.social-bars .bar-row { padding:1.8mm 0; }
+.social-attrs { height:auto; margin-top:3mm; }
 
 /* cross-source rows */
 .corro { display:grid; grid-template-columns:70mm 40mm 40mm 1fr; align-items:center;
@@ -436,6 +532,18 @@ def build_html(data: dict) -> str:
         cross_block = (_section_divider("Cross-Source", "Demand meets supply")
                        + _cross_source_page(data))
 
+    # Social / emerging — the leading Instagram engagement signal (if a social run exists).
+    social = data.get("social")
+    social_block = ""
+    if social:
+        s_baseline = social.get("is_baseline")
+        s_title = "Social Snapshot" if s_baseline else "Emerging on Social"
+        s_sub = (f"{social.get('posts', 0)} trend-leader posts" if s_baseline
+                 else "Accelerating ahead of the catalog")
+        social_block = (_section_divider(s_title, s_sub)
+                        + _social_bar_pages(social)
+                        + _social_post_pages(data.get("social_top_posts") or []))
+
     return f"""<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">
 <title>Style Island Trend Report {run}</title><style>{CSS}</style></head><body>
 {_cover(data)}
@@ -445,6 +553,7 @@ def build_html(data: dict) -> str:
 {_selling_out_pages(data)}
 {_section_divider(trend_title, trend_sub)}
 {_trend_pages(data)}
+{social_block}
 {search_block}
 {cross_block}
 </body></html>"""
