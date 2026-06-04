@@ -45,13 +45,12 @@ builder — but shares no code).
 - **Editorial PDF report** in Style Island's brand palette, 6 sections.
 - **Style Island brand profile** + **competitor research** docs.
 - **Instagram layer Phase 1**: source list + scraper *scaffold* + executive doc.
+- **Instagram scraper LIVE on Apify** (2026-06-04): `scrape_instagram.py` rewritten off
+  HikerAPI onto **Apify** (`apify/instagram-scraper`); first real pull banked **195 posts
+  + images** across 8 brands + 5 hashtags for **$0.53** of the free $5/mo credit. Same
+  output schema as before, so downstream tagging/scoring is unchanged. See §7.
 
 ### 🚧 IN PROGRESS / BLOCKED
-- **Instagram data provider decision.** We built `scrape_instagram.py` against **HikerAPI**
-  and the owner's API key works — BUT HikerAPI requires a **$50 minimum top-up** (no real
-  free tier; my earlier "100 free requests" claim was WRONG). Owner does **not** want to
-  spend $50 on an unproven tool. **We were mid-search for a cheaper alternative when the
-  chat was cleared.** See §7 — this is the active decision.
 - **Awaiting executives' list** of brands/accounts/influencers they most want monitored
   (owner asked them; will paste handles later).
 
@@ -233,37 +232,39 @@ before `update_catalog.py` (see git history / prior simulations for the snippet)
 
 ---
 
-## 7. ACTIVE BLOCKER: choosing an Instagram data provider
+## 7. RESOLVED: Instagram data provider → Apify (live-verified 2026-06-04)
 
-**Situation:** `scrape_instagram.py` is built for HikerAPI; the owner's key works
-(`HIKERAPI_KEY` is in `.env`), but HikerAPI needs a **$50 minimum top-up** (balance is $0;
-no usable free tier). Owner declined $50. We need a cheaper/no-minimum provider.
+**Outcome:** Migrated off HikerAPI (which needed a **$50 minimum top-up**, declined) onto
+**Apify**, which has a **$5/month free credit, no minimum deposit**. `scrape_instagram.py`
+now drives the `apify/instagram-scraper` actor and is **live-verified**.
 
-**Alternatives researched (2026, verify before committing — I was wrong about HikerAPI's
-free tier, so double-check):**
-- **Apify** (recommended candidate): **$5/month free credits**, no minimum deposit,
-  pay-as-you-go. Instagram scrapers ~**$1.50/1k posts** (official) / some "lowcost" actors
-  ~$0.30/1k. Our volume (~3–4k posts/mo) ≈ free-to-~$5/mo. Reliable, well-documented.
-  Tradeoff: async actor-run + dataset API model → `scrape_instagram.py` needs a rewrite.
-  Sources: apify.com/pricing, apify.com/apify/instagram-scraper.
-- **RapidAPI** Instagram scrapers: several with free tiers, paid from ~$10/mo, no minimum.
-  Quality/reliability varies a lot; would need to vet a specific one.
-- **Official Instagram Graph API:** free + ToS-clean BUT can't see competitor/influencer
-  posts (only own account + limited hashtag search, needs FB Business + app review). Kills
-  the trend-leader strategy → not a fit for the early-detection goal.
+**Verified facts (checked via the Apify API, not assumed):**
+- Owner's account: FREE plan, **$5/mo credit**. Token in `.env` as `APIFY_TOKEN`
+  (gitignored). Get/rotate it at https://console.apify.com/settings/integrations.
+- Pricing: **$0.0027 per dataset result** on the FREE tier (= the $2.70/1k shown in the
+  console). Current source list ≈ **246 results/run ≈ $0.66**, ~**$2.86/mo** — inside the
+  free credit. First real run pulled **195 posts + images for $0.53**.
 
-**Recommended next action:** verify **Apify's** current free tier + Instagram actor pricing,
-then rewrite `scrape_instagram.py` to call Apify (actor run → poll → fetch dataset), keeping
-the same output schema so downstream tagging/scoring is unchanged. Confirm with owner before
-any spend. Keep the HikerAPI code in git history in case they ever opt into the $50.
+**How the new scraper works:** start an actor run (POST) → poll the run to `SUCCEEDED` →
+fetch its default dataset. **Accounts** go in one run (each result carries `ownerUsername`,
+mapped back to the configured source; collab/repost items attribute to their real owner).
+**Each hashtag is its own run** so every post is attributable to its tag. Fail-soft
+throughout; `--dry-run` previews cost with no runs; `--max-results` caps spend per run;
+optional `only_posts_newer_than` config key limits to recent posts. **Output schema is
+unchanged**, so tagging/scoring slots in untouched. HikerAPI code remains in git history
+(commit `55a6f9b`) if the owner ever opts into the $50.
+
+**Why not the alternatives:** RapidAPI scrapers vary too much in quality; the official
+Instagram Graph API can't see competitor/influencer posts (kills the trend-leader strategy).
 
 ---
 
 ## 8. Roadmap / next steps
 
 ### Immediate (next session)
-1. **Resolve the Instagram provider** (§7): verify Apify pricing → get owner's OK → rewrite
-   `scrape_instagram.py` for Apify → small live test → confirm it pulls real posts + images.
+1. ✅ **DONE (2026-06-04): Instagram provider resolved → Apify** (§7). Rewritten,
+   live-verified, first 195-post dataset banked for $0.53. **Next up is step 3 below** —
+   run FashionCLIP on the social images now sitting in `.tmp/images/instagram/`.
 2. **Merge executives' source picks** into `instagram_sources.yaml` when the owner sends
    them; verify handles resolve.
 

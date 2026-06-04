@@ -1,21 +1,26 @@
 #!/usr/bin/env python3
 """
-scrape_instagram.py — Pull public Instagram posts for trend detection (via HikerAPI).
+scrape_instagram.py — Pull public Instagram posts for trend detection (via Apify).
 
-Reads config/instagram_sources.yaml (trend-leader accounts + hashtags), fetches recent
-posts for each via HikerAPI, captures engagement (likes/comments) + the post image, and
-writes a dated JSON. The images then feed the SAME local FashionCLIP tagging the catalog
-uses, so social posts get garment attributes too — that's the demand-side signal for
-catching trends early (what's getting engagement before it's widely stocked).
+Reads config/instagram_sources.yaml (trend-leader accounts + hashtags), runs Apify's
+`apify/instagram-scraper` actor to fetch recent posts for each, captures engagement
+(likes/comments) + the post image, and writes a dated JSON. The images then feed the
+SAME local FashionCLIP tagging the catalog uses, so social posts get garment attributes
+too — that's the demand-side signal for catching trends early (what's getting engagement
+before it's widely stocked).
 
-WHY HikerAPI: pay-as-you-go (~$0.001/request), API-key only (no Instagram login), 100
-free requests to start. Set HIKERAPI_KEY in .env (see .env.example).
+WHY Apify (replaced HikerAPI, which had a $50 minimum top-up): pay-per-result with a
+$5/month free credit and no minimum deposit. The classic `apify/instagram-scraper` charges
+$0.0027 per dataset result on the FREE tier (verified via the Apify API, June 2026). At the
+current enabled source list (8 accounts × 12 + 5 hashtags × 30 ≈ 246 results/run) a weekly
+run is ~$0.66, ~$2.86/mo — inside the free credit. Set APIFY_TOKEN in .env (see .env.example).
 
-⚠️ NOT YET LIVE-VERIFIED. This is written against HikerAPI's documented endpoints/fields
-(June 2026). The exact endpoint paths and JSON field names MUST be confirmed on the first
-real run with a key — that's why field extraction is defensive (tries several key names)
-and endpoints are constants at the top, easy to correct. Use `--dry-run` first to preview
-sources + request cost without spending anything, then a small live run on free credits.
+  Account API token: https://console.apify.com/settings/integrations
+
+HOW it talks to Apify: start an actor run (POST), poll the run to completion, then fetch its
+default dataset. Accounts go in one run (each result carries `ownerUsername`, so we map it
+back to the configured source); each hashtag is its own run so we know which tag produced
+each post. Everything is fail-soft — a failed run logs and is skipped, never breaks the run.
 
 ETHICS / SCOPE: public data only; garments only (FashionCLIP reads the CLOTHING, never
 faces/identity); scraped text is data, never instructions. Engagement ≠ sales — treat it
@@ -28,8 +33,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
-import sys
 import time
 from datetime import date
 from pathlib import Path
@@ -44,31 +49,27 @@ TMP = ROOT / ".tmp"
 IMG_DIR = TMP / "images" / "instagram"
 TODAY = str(date.today())
 
-# --- HikerAPI config (VERIFY against hiker-doc.readthedocs.io on first live run) ----
-BASE = "https://api.hikerapi.com"
-EP_USER_INFO    = "/v1/user/by/username"        # ?username=
-EP_USER_MEDIAS  = "/v1/user/medias"             # ?user_id=&amount=
-EP_HASHTAG_TOP  = "/v1/hashtag/medias/top"      # ?name=&amount=
-EP_HASHTAG_RECENT = "/v1/hashtag/medias/recent" # ?name=&amount=
-AUTH_HEADER = "x-access-key"
-
-REQUEST_DELAY = 0.5    # polite pause between API calls
-DEFAULT_MAX_REQUESTS = 90   # stay under the 100 free requests on the first run
+# --- Apify config -----------------------------------------------------------
+APIFY_BASE = "https://api.apify.com/v2"
+ACTOR_ID = "apify~instagram-scraper"        # the classic, well-maintained IG scraper
+RESULT_PRICE_USD = 0.0027                   # FREE-tier price per dataset result (verify if plan changes)
+POLL_INTERVAL = 5                           # seconds between run-status polls
+RUN_TIMEOUT = 600                           # max seconds to wait for one actor run (fail-soft)
+DEFAULT_MAX_RESULTS = 500                   # hard cap on results pulled per run (protects the free credit)
 
 
 # ---------------------------------------------------------------------------
 # Setup
 # ---------------------------------------------------------------------------
 
-def load_env_key() -> str | None:
-    """Read HIKERAPI_KEY from the environment or the .env file (no extra dependency)."""
-    import os
-    if os.environ.get("HIKERAPI_KEY"):
-        return os.environ["HIKERAPI_KEY"]
+def load_env_token() -> str | None:
+    """Read APIFY_TOKEN from the environment or the .env file (no extra dependency)."""
+    if os.environ.get("APIFY_TOKEN"):
+        return os.environ["APIFY_TOKEN"]
     if ENV.exists():
         for line in ENV.read_text().splitlines():
             line = line.strip()
-            if line.startswith("HIKERAPI_KEY") and "=" in line:
+            if line.startswith("APIFY_TOKEN") and "=" in line:
                 return line.split("=", 1)[1].strip().strip('"').strip("'")
     return None
 
@@ -78,104 +79,119 @@ def load_config() -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Defensive field extraction (HikerAPI/Instagram media shapes vary)
+# Defensive field extraction (Apify instagram-scraper post shape)
 # ---------------------------------------------------------------------------
-
-def _first(d: dict, *keys, default=None):
-    for k in keys:
-        if isinstance(d, dict) and d.get(k) not in (None, ""):
-            return d[k]
-    return default
-
-
-def _image_url(media: dict) -> str | None:
-    # try the common shapes: image_versions2.candidates[0].url, thumbnail_url, display_url
-    iv = media.get("image_versions2") or {}
-    cands = iv.get("candidates") if isinstance(iv, dict) else None
-    if cands and isinstance(cands, list) and cands[0].get("url"):
-        return cands[0]["url"]
-    # carousel: first child
-    carousel = media.get("carousel_media") or media.get("resources")
-    if carousel and isinstance(carousel, list):
-        child = carousel[0]
-        sub = _image_url(child) if isinstance(child, dict) else None
-        if sub:
-            return sub
-    return _first(media, "thumbnail_url", "display_url", "thumbnail_src", "image_url")
-
-
-def _caption(media: dict) -> str:
-    cap = media.get("caption")
-    if isinstance(cap, dict):
-        return cap.get("text", "") or ""
-    return _first(media, "caption_text", "title", default="") or (cap if isinstance(cap, str) else "")
-
 
 def _hashtags(text: str) -> list[str]:
     return re.findall(r"#(\w+)", text or "")
 
 
-def normalise_post(media: dict, source: dict) -> dict:
-    caption = _caption(media)
+def _first_image(item: dict) -> str | None:
+    """Carousel/sidecar posts expose an `images` list; fall back to its first entry."""
+    imgs = item.get("images")
+    if isinstance(imgs, list) and imgs:
+        first = imgs[0]
+        if isinstance(first, str):
+            return first
+        if isinstance(first, dict):
+            return first.get("url")
+    return None
+
+
+def normalise_post(item: dict, source: dict) -> dict:
+    """Map one Apify dataset item to our stable post schema (unchanged downstream)."""
+    caption = (item.get("caption") or "")[:300]
+    tags = item.get("hashtags") or _hashtags(caption)
+    likes = item.get("likesCount")
+    if isinstance(likes, (int, float)) and likes < 0:   # IG hides counts as -1 sometimes
+        likes = None
+    short = item.get("shortCode") or item.get("code")
     return {
         "source":        "instagram",
         "source_handle": source.get("handle") or source.get("tag"),
         "source_type":   source.get("type", "hashtag"),
         "weight":        source.get("weight", 1.0),
-        "post_id":       str(_first(media, "id", "pk", "code", default="")),
-        "permalink":     f"https://instagram.com/p/{media.get('code')}" if media.get("code") else "",
-        "caption":       caption[:300],
-        "hashtags":      _hashtags(caption),
-        "like_count":    _first(media, "like_count", "likes_count", "edge_liked_by_count", default=None),
-        "comment_count": _first(media, "comment_count", "comments_count", default=None),
-        "taken_at":      _first(media, "taken_at", "taken_at_ts", "device_timestamp", default=None),
-        "image_url":     _image_url(media),
+        "post_id":       str(item.get("id") or short or ""),
+        "permalink":     item.get("url") or (f"https://www.instagram.com/p/{short}/" if short else ""),
+        "caption":       caption,
+        "hashtags":      tags,
+        "like_count":    likes,
+        "comment_count": item.get("commentsCount"),
+        "taken_at":      item.get("timestamp"),
+        "image_url":     item.get("displayUrl") or _first_image(item),
         "image_local":   None,
         "scraped_date":  TODAY,
     }
 
 
 # ---------------------------------------------------------------------------
-# HikerAPI client (fail-soft)
+# Apify client (fail-soft): start run → poll → fetch dataset
 # ---------------------------------------------------------------------------
 
-class Hiker:
-    def __init__(self, key: str, max_requests: int):
-        self.key = key
-        self.max_requests = max_requests
-        self.used = 0
+class Apify:
+    def __init__(self, token: str, max_results: int):
+        self.token = token
+        self.max_results = max_results
+        self.results_used = 0
 
-    def get(self, path: str, params: dict) -> dict | None:
-        if self.used >= self.max_requests:
-            print(f"   ! request budget ({self.max_requests}) reached — stopping early")
-            return None
-        self.used += 1
+    def run_and_fetch(self, run_input: dict, label: str) -> list[dict]:
+        if self.results_used >= self.max_results:
+            print(f"   ! result budget ({self.max_results}) reached — skipping {label}")
+            return []
+
+        # 1) start the actor run
         try:
-            r = requests.get(BASE + path, params=params,
-                             headers={AUTH_HEADER: self.key}, timeout=30)
-            if r.status_code == 200:
-                return r.json()
-            print(f"   ! {path} {params} → HTTP {r.status_code}")
-            return None
+            r = requests.post(f"{APIFY_BASE}/acts/{ACTOR_ID}/runs",
+                              params={"token": self.token}, json=run_input, timeout=30)
+            if r.status_code not in (200, 201):
+                print(f"   ! {label}: start failed HTTP {r.status_code} — {r.text[:200]}")
+                return []
+            run = r.json()["data"]
         except Exception as e:
-            print(f"   ! {path} {params} → {e}")
-            return None
+            print(f"   ! {label}: start error — {e}")
+            return []
 
-    @staticmethod
-    def _medias_from(payload) -> list[dict]:
-        """HikerAPI may wrap media lists differently; dig out the list of media dicts."""
-        if isinstance(payload, list):
-            return payload
-        if isinstance(payload, dict):
-            for k in ("medias", "items", "response", "data"):
-                v = payload.get(k)
-                if isinstance(v, list):
-                    return v
-                if isinstance(v, dict):
-                    for kk in ("medias", "items"):
-                        if isinstance(v.get(kk), list):
-                            return v[kk]
-        return []
+        run_id = run["id"]
+        dataset_id = run.get("defaultDatasetId")
+
+        # 2) poll until the run finishes (or we give up)
+        waited = 0
+        status = run.get("status", "RUNNING")
+        while waited < RUN_TIMEOUT:
+            time.sleep(POLL_INTERVAL)
+            waited += POLL_INTERVAL
+            try:
+                status = requests.get(f"{APIFY_BASE}/actor-runs/{run_id}",
+                                      params={"token": self.token}, timeout=30).json()["data"]["status"]
+            except Exception as e:
+                print(f"   ! {label}: poll error — {e}")
+                continue
+            if status == "SUCCEEDED":
+                break
+            if status in ("FAILED", "ABORTED", "TIMED-OUT"):
+                print(f"   ! {label}: run {status} — skipped")
+                return []
+        if status != "SUCCEEDED":
+            print(f"   ! {label}: run did not finish in {RUN_TIMEOUT}s — aborting it")
+            try:
+                requests.post(f"{APIFY_BASE}/actor-runs/{run_id}/abort",
+                              params={"token": self.token}, timeout=15)
+            except Exception:
+                pass
+            return []
+
+        # 3) fetch the dataset
+        try:
+            items = requests.get(f"{APIFY_BASE}/datasets/{dataset_id}/items",
+                                 params={"token": self.token, "clean": "true"}, timeout=60).json()
+        except Exception as e:
+            print(f"   ! {label}: dataset fetch error — {e}")
+            return []
+        if not isinstance(items, list):
+            items = []
+        self.results_used += len(items)
+        print(f"   {label}: {len(items)} results")
+        return items
 
 
 # ---------------------------------------------------------------------------
@@ -198,31 +214,42 @@ def download_image(url: str, dest: Path) -> bool:
         return False
 
 
-def fetch_account(hiker: Hiker, acc: dict, n: int) -> list[dict]:
-    handle = acc["handle"]
-    info = hiker.get(EP_USER_INFO, {"username": handle})
-    if not info:
-        print(f"   {handle}: not found / error — skipped")
+def fetch_accounts(client: Apify, accounts: list[dict], n: int, only_newer: str | None) -> list[dict]:
+    """One run for all account profile URLs; map each result back via ownerUsername."""
+    if not accounts:
         return []
-    user = info.get("user", info)
-    user_id = _first(user, "pk", "id", "user_id")
-    if not user_id:
-        print(f"   {handle}: no user_id in response — skipped (verify endpoint)")
-        return []
-    payload = hiker.get(EP_USER_MEDIAS, {"user_id": user_id, "amount": n})
-    medias = Hiker._medias_from(payload)[:n]
-    print(f"   {handle}: {len(medias)} posts")
-    return [normalise_post(m, acc) for m in medias]
+    by_handle = {a["handle"].lower(): a for a in accounts}
+    run_input = {
+        "directUrls":   [f"https://www.instagram.com/{a['handle']}/" for a in accounts],
+        "resultsType":  "posts",
+        "resultsLimit": n,
+        "addParentData": False,
+    }
+    if only_newer:
+        run_input["onlyPostsNewerThan"] = only_newer
+    items = client.run_and_fetch(run_input, f"{len(accounts)} accounts")
+    posts = []
+    for it in items:
+        owner = (it.get("ownerUsername") or "").lower()
+        src = by_handle.get(owner) or {"handle": owner or "unknown", "type": "intl_brand", "weight": 1.0}
+        posts.append(normalise_post(it, src))
+    return posts
 
 
-def fetch_hashtag(hiker: Hiker, tag_def: dict, n: int, sort: str) -> list[dict]:
+def fetch_hashtag(client: Apify, tag_def: dict, n: int, only_newer: str | None) -> list[dict]:
+    """One run per hashtag so each result is attributable to its tag (+ weight)."""
     tag = tag_def["tag"]
-    ep = EP_HASHTAG_TOP if sort == "top" else EP_HASHTAG_RECENT
-    payload = hiker.get(ep, {"name": tag, "amount": n})
-    medias = Hiker._medias_from(payload)[:n]
+    run_input = {
+        "directUrls":   [f"https://www.instagram.com/explore/tags/{tag}/"],
+        "resultsType":  "posts",
+        "resultsLimit": n,
+        "addParentData": False,
+    }
+    if only_newer:
+        run_input["onlyPostsNewerThan"] = only_newer
+    items = client.run_and_fetch(run_input, f"#{tag}")
     src = {"tag": tag, "type": "hashtag", "weight": tag_def.get("weight", 1.0)}
-    print(f"   #{tag}: {len(medias)} posts")
-    return [normalise_post(m, src) for m in medias]
+    return [normalise_post(it, src) for it in items]
 
 
 # ---------------------------------------------------------------------------
@@ -230,11 +257,11 @@ def fetch_hashtag(hiker: Hiker, tag_def: dict, n: int, sort: str) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 def main():
-    ap = argparse.ArgumentParser(description="Scrape Instagram trend sources via HikerAPI.")
+    ap = argparse.ArgumentParser(description="Scrape Instagram trend sources via Apify.")
     ap.add_argument("--dry-run", action="store_true",
-                    help="List what would be fetched + estimate request cost; no API calls.")
-    ap.add_argument("--max-requests", type=int, default=DEFAULT_MAX_REQUESTS,
-                    help=f"Cap API calls this run (default {DEFAULT_MAX_REQUESTS}; protects free tier).")
+                    help="List what would be fetched + estimate result cost; no actor runs.")
+    ap.add_argument("--max-results", type=int, default=DEFAULT_MAX_RESULTS,
+                    help=f"Cap total results pulled this run (default {DEFAULT_MAX_RESULTS}; protects the free credit).")
     args = ap.parse_args()
 
     cfg = load_config()
@@ -242,43 +269,42 @@ def main():
     hashtags = [h for h in cfg.get("hashtags", []) if h.get("enabled")]
     n_acc = cfg.get("posts_per_account", 12)
     n_tag = cfg.get("posts_per_hashtag", 30)
-    sort = cfg.get("hashtag_sort", "top")
+    only_newer = cfg.get("only_posts_newer_than")   # optional, e.g. "2 weeks"; omit to take latest N
 
-    # Cost preview: 1 lookup + 1 medias call per account; 1 call per hashtag.
-    est_requests = len(accounts) * 2 + len(hashtags)
+    # Cost preview: upper bound (real runs may return fewer if an account/tag has fewer recent posts).
+    est_results = len(accounts) * n_acc + len(hashtags) * n_tag
     print(f"Enabled: {len(accounts)} accounts, {len(hashtags)} hashtags")
-    print(f"Estimated API requests this run: ~{est_requests} "
-          f"(≈ ${est_requests*0.001:.3f} at standard tier)")
+    print(f"Estimated results this run: up to ~{est_results} "
+          f"(≈ ${est_results * RESULT_PRICE_USD:.2f} at the FREE tier ${RESULT_PRICE_USD}/result)")
+    if only_newer:
+        print(f"Filtering to posts newer than: {only_newer}")
 
     if args.dry_run:
         print("\n--dry-run — would fetch:")
         for a in accounts:
-            print(f"   account @{a['handle']} ({a.get('type')}, w={a.get('weight')}) — {n_acc} posts")
+            print(f"   account @{a['handle']} ({a.get('type')}, w={a.get('weight')}) — up to {n_acc} posts")
         for h in hashtags:
-            print(f"   #{h['tag']} ({sort}) — {n_tag} posts")
-        print("\nNo API calls made. Set HIKERAPI_KEY in .env and drop --dry-run to fetch.")
+            print(f"   #{h['tag']} (top) — up to {n_tag} posts")
+        print("\nNo actor runs made. Set APIFY_TOKEN in .env and drop --dry-run to fetch.")
         return
 
-    key = load_env_key()
-    if not key:
-        print("\nNo HIKERAPI_KEY found in environment or .env — skipping (fail-soft).")
-        print("Sign up at https://hikerapi.com (100 free requests), then add to .env:")
-        print("   HIKERAPI_KEY=your_key_here")
+    token = load_env_token()
+    if not token:
+        print("\nNo APIFY_TOKEN found in environment or .env — skipping (fail-soft).")
+        print("Get a token at https://console.apify.com/settings/integrations, then add to .env:")
+        print("   APIFY_TOKEN=apify_api_...")
         return
 
     TMP.mkdir(exist_ok=True)
-    hiker = Hiker(key, args.max_requests)
+    client = Apify(token, args.max_results)
     posts: list[dict] = []
 
     print("\nAccounts:")
-    for acc in accounts:
-        posts.extend(fetch_account(hiker, acc, n_acc))
-        time.sleep(REQUEST_DELAY)
+    posts.extend(fetch_accounts(client, accounts, n_acc, only_newer))
 
     print("Hashtags:")
     for h in hashtags:
-        posts.extend(fetch_hashtag(hiker, h, n_tag, sort))
-        time.sleep(REQUEST_DELAY)
+        posts.extend(fetch_hashtag(client, h, n_tag, only_newer))
 
     # Download images (garment tagging input). Skip people — FashionCLIP reads clothing.
     print(f"\nDownloading {len(posts)} post images ...")
@@ -292,18 +318,19 @@ def main():
         time.sleep(0.1)
 
     out = {
-        "scraped_date": TODAY,
-        "requests_used": hiker.used,
-        "accounts": len(accounts),
-        "hashtags": len(hashtags),
-        "posts": posts,
+        "scraped_date":  TODAY,
+        "results_used":  client.results_used,
+        "est_cost_usd":  round(client.results_used * RESULT_PRICE_USD, 4),
+        "accounts":      len(accounts),
+        "hashtags":      len(hashtags),
+        "posts":         posts,
     }
     out_file = TMP / f"instagram_{TODAY}.json"
     out_file.write_text(json.dumps(out, indent=2, ensure_ascii=False))
 
     with_img = sum(1 for p in posts if p.get("image_local"))
     print(f"\nDone — {len(posts)} posts ({with_img} with images), "
-          f"{hiker.used} API requests used.")
+          f"{client.results_used} results (≈ ${out['est_cost_usd']}).")
     print(f"Saved → {out_file}")
 
 

@@ -214,3 +214,13 @@ playwright install chromium
   Instagram was scoped OUT for now: the official API can't see competitor posts and a
   scraper costs money (user chose free-only); the pipeline is built so a paid social
   image source slots into the same scoring layer later.
+- 2026-06-04: Instagram layer went LIVE on **Apify**. First built `scrape_instagram.py`
+  against HikerAPI, but HikerAPI turned out to need a **$50 minimum top-up** (no usable
+  free tier — an earlier "100 free requests" claim was wrong). Switched to **Apify**:
+  $5/mo free credit, no minimum, `apify/instagram-scraper` at **$0.0027/result** (verified
+  via the Apify API, not the marketing page). Rewrote the scraper to the actor-run model
+  (start run → poll → fetch dataset; accounts in one run keyed by `ownerUsername`, one run
+  per hashtag) while keeping the **exact same output schema** so tagging/scoring downstream
+  is untouched. Live-verified end-to-end: a real run pulled **195 posts + images for
+  $0.53**. Lessons reinforced: (1) verify pricing/free-tier claims against the provider's
+  own API before reporting them; (2) don't claim "done" until a live run proves it.
