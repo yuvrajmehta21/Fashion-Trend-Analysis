@@ -23,9 +23,10 @@ Agent" (borrowed its *shape* — polite scraping, dated JSON in `.tmp/`, the edi
 builder — but shares no code).
 
 - **Repo:** https://github.com/yuvrajmehta21/Fashion-Trend-Analysis (PUBLIC, branch `main`)
-- **Latest commit:** `5a0b71c` (Instagram monitoring sources doc)
+- **Latest commit:** `5dcf004` (pin transformers<5 / pandas<3) — see §12
 - **Local path:** `/Users/yuvrajmehta/Desktop/Code/Fashion Trend Analysis`
-- **Owner email:** yuvrajmehta05@gmail.com
+- **Deployed on:** DigitalOcean droplet `139.59.34.167`, weekly cron Mon 06:00 IST — see §13
+- **Owner email (reports):** yuvrajmehta05@gmail.com (sent from yuvrajmehta2107@gmail.com)
 
 > ⚠️ Repo is PUBLIC. Never commit secrets. `.env`, `data/`, `.tmp/`, `.venv/` are
 > gitignored. Verified safe so far.
@@ -57,6 +58,9 @@ builder — but shares no code).
   412, Azurina 233, Label by Mohita 117; **Saaki skipped — robots.txt disallows
   /products.json**). `data/catalog.json` now holds this baseline. A complete **21-page
   retail+social PDF** was generated and verified page-by-page (`.tmp/trend_report_2026-06-04.pdf`).
+- **DEPLOYED & SCHEDULED** (2026-06-04): running on DigitalOcean droplet `139.59.34.167`,
+  **weekly cron Mon 06:00 IST**, with **email delivery** to yuvrajmehta05@gmail.com
+  (`send_email.py`, Gmail SMTP_SSL). Smoke-tested + baseline run on the droplet. See §13.
 
 ### 🚧 IN PROGRESS / BLOCKED
 - **Awaiting executives' list** of brands/accounts/influencers they most want monitored
@@ -298,12 +302,15 @@ Instagram Graph API can't see competitor/influencer posts (kills the trend-leade
 - **Bank a 2nd social run** (next week, or a back-dated test) so the emerging/velocity
   view actually populates — right now it correctly shows a baseline snapshot.
 
-### Then (productionising)
-7. **Real baseline run** across the 7 brands (no simulation), bank weeks of history.
-8. **Schedule weekly** on the shared DigitalOcean droplet (cron + flock + log file). Do NOT
-   set up the droplet until the loop is proven end-to-end (owner's instruction).
-9. **Email delivery** of the PDF (mirror Best Sellers Agent's `send_email.py` SMTP +
-   App-Password pattern, gated by a `REPORT_SHARING_ENABLED` flag).
+### Then (productionising) — ✅ ALL DONE 2026-06-04 (see §13)
+7. ✅ **Real baseline run** — local full run banked **2,299 items / 6 brands**; the droplet
+   ran its own full baseline too. No simulation.
+8. ✅ **Scheduled weekly on the DigitalOcean droplet** (`139.59.34.167`): cron
+   `30 0 * * 1` (UTC) = **Mon 06:00 IST**, with `flock` + log. Loop was proven end-to-end
+   first, per the owner's instruction.
+9. ✅ **Email delivery LIVE** — `tools/send_email.py` (Gmail SMTP_SSL:465, gated on
+   `REPORT_SHARING_ENABLED=true`), sending to **yuvrajmehta05@gmail.com**. Verified
+   (baseline report delivered). See §13 for the full deploy.
 
 ### Optional / nice-to-have
 - Branded PDF version of `Instagram_Monitoring_Sources.md` for execs (offered, not done).
@@ -313,15 +320,21 @@ Instagram Graph API can't see competitor/influencer posts (kills the trend-leade
 ---
 
 ## 9. Awaiting from the owner
-- **Top-up decision / provider preference** for Instagram (the $50 HikerAPI blocker).
-- **Executives' list** of brands + influencers to monitor (handles).
-- (Optional) whether to render the exec doc as a branded PDF.
+- **Executives' list of Instagram handles + brands to monitor** — the ONLY substantive
+  open item. Paste the handles; they go into `config/instagram_sources.yaml` (set
+  `enabled: true`, pick `weight`), then verify each resolves on the next run. The influencer
+  + competitor + trend-account rows there are drafts, currently disabled, waiting on this.
+- (Optional) whether to render the exec doc (`Instagram_Monitoring_Sources.md`) as a
+  branded PDF.
+- (Optional) the owner plans to **disable the other droplet automation** (Bestseller agent,
+  cron `30 2 1,15 * *`) once this is confirmed stable — not required for this to run.
 
 ---
 
 ## 10. Honest limitations (set expectations)
-- No real weeks banked yet — everything shown was simulated; tool value compounds with real
-  weekly history.
+- **One real week banked (2026-06-04 baseline).** Velocity signals (rising, sell-through,
+  emerging, cross-source) need a 2nd run — they populate from the **first scheduled cron
+  run (Mon 2026-06-08)**. Snapshot signals are useful now; value compounds weekly.
 - Sell-through is a proxy (out-of-stock can mean discontinued, not just sold).
 - Google Trends is thin for niche English terms in India (most read "low volume").
 - FashionCLIP fabric guess is shaky; social images will be noisier to tag than clean
@@ -351,6 +364,16 @@ Instagram Graph API can't see competitor/influencer posts (kills the trend-leade
 - **Don't let "New This Week" render the whole catalog on a baseline** — every item is
   "new", so the grid is capped (`NEW_MAX_CARDS`) to a sample; the full set still feeds the
   attribute analysis. (An uncapped baseline tried to embed 2,299 images → ~383 pages.)
+- **PIN `transformers<5` and `pandas<3` in `requirements.txt`.** A fresh install (droplet,
+  Python 3.12) pulled transformers 5.x, whose `CLIPModel.get_text_features()` returns a
+  ModelOutput object, not a tensor → `feats.norm()` crashes → tagging silently produces
+  nothing. Verified ranges: transformers 4.57 / pandas 2.3.
+- **Gmail SMTP: use `SMTP_SSL` on port 465, not STARTTLS on 587** (587 fails "Server not
+  connected"), and **strip spaces from the App Password** (Google shows it spaced). Copied
+  from the Bestseller agent's working `send_email.py`.
+- **Don't change the droplet's system timezone** — it's shared with the Bestseller cron, so
+  a TZ change would shift *its* schedule. The droplet runs UTC; the weekly cron uses
+  `30 0 * * 1` (UTC) to hit 06:00 IST. Append to crontab, never replace it.
 
 ---
 
@@ -358,6 +381,38 @@ Instagram Graph API can't see competitor/influencer posts (kills the trend-leade
 - `8cd5776` Build #1: competitor catalog tracker (scrape→tag→catalog→trends→PDF)
 - `932e7fc` Fix PDF layout + scope to competitors only (drop Style Island)
 - `68e29ac` Multi-source: more brands, sell-through, Google Trends, cross-source
-- `3d7e736` Fix overlapping rows on the second Search Interest page
 - `55a6f9b` Add Instagram trend layer (HikerAPI): source list + scraper scaffold
-- `5a0b71c` Add shareable Instagram monitoring sources doc (latest)
+- `ea1d906` Migrate Instagram scraper HikerAPI → Apify (live-verified)
+- `bc5e276` Add social trend layer (tag IG, emerging detection, PDF section)
+- `78522a3` Fix baseline-run bugs from the first full retail run
+- `3f8699e` Add email delivery + droplet deployment guide
+- `5dcf004` Pin transformers<5 / pandas<3 (5.x broke FashionCLIP)
+
+---
+
+## 13. Deployment (LIVE — 2026-06-04)
+
+**Where it runs:** existing DigitalOcean droplet **`139.59.34.167`** (Ubuntu 24.04, 2 GB
+RAM + 2 GB swap, 1 vCPU). SSH as `root` from the owner's Mac (key auth, port 22). The repo
+lives at `/root/Fashion-Trend-Analysis`; secrets in `/root/Fashion-Trend-Analysis/.env`
+(`chmod 600`, scp'd up — never via git). FashionCLIP needs ~1.5–2 GB at peak, hence the
+RAM bump + swap (the 1 GB default OOMs).
+
+**Schedule:** cron, **Mon 06:00 IST** (`30 0 * * 1` UTC):
+```
+30 0 * * 1 cd /root/Fashion-Trend-Analysis && mkdir -p .tmp && /usr/bin/flock -n /tmp/fashion-tracker.lock env SOCIAL=1 bash run_tracker.sh >> .tmp/cron.log 2>&1
+```
+The droplet also runs the **Bestseller agent** (`30 2 1,15 * *`) — left untouched; we
+appended, never replaced. `SOCIAL=1` includes the Apify Instagram pull (~$0.53/run).
+
+**Email:** delivered to **yuvrajmehta05@gmail.com**, sent from **yuvrajmehta2107@gmail.com**
+(Gmail App Password in `.env`), gated on `REPORT_SHARING_ENABLED=true`.
+
+**Operate (from the owner's Mac):**
+- Code change: `git push` locally → `ssh root@139.59.34.167 'cd Fashion-Trend-Analysis && git pull'`.
+- Rotate a secret: re-`scp .env` up.
+- Watch a run: `ssh root@139.59.34.167 'tail -f Fashion-Trend-Analysis/.tmp/cron.log'`.
+- Pause: edit crontab and comment the Style Island line (leave Bestseller's intact).
+- Full setup steps + droplet-sizing rationale live in **`DEPLOY.md`**.
+
+**Cost:** droplet (already owned) + Apify ~$2.86/mo (inside the free $5) ≈ negligible new spend.
