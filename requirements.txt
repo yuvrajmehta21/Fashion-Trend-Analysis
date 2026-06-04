@@ -2,15 +2,22 @@
 # Install into a project-local venv:  python3 -m venv .venv && . .venv/bin/activate && pip install -r requirements.txt
 
 # --- Core (scraping, config, trends, PDF) ---------------------------------
-requests           # HTTP for the Shopify products.json scrape
-PyYAML             # read config/competitors.yaml + trend_keywords.yaml
-pandas             # trend counting / scoring over time
-playwright         # render the weekly PDF via headless Chromium (run: playwright install chromium)
-Pillow             # image handling for tagging + PDF
-pytrends           # free Google Trends search-interest signal (no API key)
+# Versions are pinned to the ranges verified end-to-end (June 2026). Unpinned, a
+# fresh install (e.g. on the droplet) pulled transformers 5.x and pandas 3.x, which
+# broke tagging — see the transformers note below.
+requests                  # HTTP for the Shopify products.json scrape
+PyYAML                    # read config/competitors.yaml + trend_keywords.yaml
+pandas>=2.1,<3            # trend counting / scoring. pandas 3.x changes defaults — stay on 2.x.
+playwright>=1.40,<2       # render the weekly PDF via headless Chromium (run: playwright install chromium)
+Pillow                    # image handling for tagging + PDF
+pytrends                  # free Google Trends search-interest signal (no API key)
 
 # --- Local garment tagging (FashionCLIP, free, runs on CPU) ---------------
 # FashionCLIP is a CLIP model fine-tuned on fashion. We load it through the
 # transformers library (checkpoint: patrickjohncyh/fashion-clip).
-torch              # FashionCLIP backend (CPU is fine for our volumes)
-transformers       # loads the FashionCLIP checkpoint + processor
+torch>=2.2,<3             # FashionCLIP backend (CPU is fine for our volumes)
+# transformers MUST stay on 4.x: 5.x changed CLIPModel.get_text_features()/
+# get_image_features() to return a ModelOutput object instead of a tensor, so
+# `feats.norm(...)` in tag_garments.py raises AttributeError. Pin until that code
+# is updated for the 5.x return type.
+transformers>=4.50,<5     # loads the FashionCLIP checkpoint + processor
