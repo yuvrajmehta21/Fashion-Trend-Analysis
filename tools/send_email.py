@@ -39,7 +39,8 @@ ENV = ROOT / ".env"
 TODAY = str(date.today())
 
 SMTP_HOST = "smtp.gmail.com"
-SMTP_PORT = 587
+SMTP_PORT = 465   # SSL. (STARTTLS on 587 drops as "Server not connected" with Gmail —
+                  # matches the Best Sellers agent's working send_email.py.)
 
 
 def load_env() -> dict:
@@ -126,8 +127,9 @@ def main():
         print("\nNo email sent.")
         return
 
-    sender = env.get("EMAIL_FROM_ADDRESS")
-    app_pw = env.get("EMAIL_FROM_APP_PASSWORD")
+    sender = (env.get("EMAIL_FROM_ADDRESS") or "").strip()
+    # App passwords are shown by Google with spaces; SMTP accepts either, strip defensively.
+    app_pw = (env.get("EMAIL_FROM_APP_PASSWORD") or "").replace(" ", "")
     if not (sender and app_pw and recipients):
         print("\nMissing EMAIL_FROM_ADDRESS / EMAIL_FROM_APP_PASSWORD / REPORT_EMAILS "
               "in .env — cannot send (skipping, fail-soft).")
@@ -143,11 +145,13 @@ def main():
 
     try:
         ctx = ssl.create_default_context()
-        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=60) as s:
-            s.starttls(context=ctx)
+        # Fresh SMTP_SSL handshake (300s — large attachments upload slowly).
+        with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, context=ctx, timeout=300) as s:
             s.login(sender, app_pw)
             s.send_message(msg)
         print(f"\nSent → {', '.join(recipients)} ({pdf.stat().st_size // 1024} KB attached).")
+    except smtplib.SMTPAuthenticationError as e:
+        print(f"\n! SMTP auth failed — check EMAIL_FROM_APP_PASSWORD (App Password, 2FA on): {e}")
     except Exception as e:
         print(f"\n! Email send failed (fail-soft, run continues): {e}")
 
