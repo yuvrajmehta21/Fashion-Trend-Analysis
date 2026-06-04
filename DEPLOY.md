@@ -4,6 +4,10 @@ Goal: run `run_tracker.sh` once a week, unattended, and email the PDF to
 `yuvrajmehta05@gmail.com`. The laptop is not a server — the droplet runs it on schedule
 even while the laptop sleeps.
 
+> **Chosen config (2026-06-04):** DigitalOcean **2 GB** droplet (~$12/mo), schedule
+> **Monday 06:00 IST**, email to `yuvrajmehta05@gmail.com` only. The commands below are
+> already set to these; change them if your plan changes.
+
 ---
 
 ## 0. Droplet size — read this first (it costs more than $4/mo)
@@ -69,14 +73,16 @@ email arrived. Fix anything before scheduling.
 
 ## 5. Schedule with cron (+ flock so runs never overlap)
 
-`crontab -e`, then add (example: **every Monday 06:00 server time**):
+First set the timezone so 06:00 means IST:
+```bash
+sudo timedatectl set-timezone Asia/Kolkata
+```
+Then `crontab -e` and add (**every Monday 06:00 IST**):
 ```
 0 6 * * 1 cd /root/Fashion-Trend-Analysis && /usr/bin/flock -n .tmp/run.lock env SOCIAL=1 bash run_tracker.sh >> .tmp/cron.log 2>&1
 ```
-- Set the droplet timezone first if you want a specific local time:
-  `sudo timedatectl set-timezone Asia/Kolkata`.
 - `flock -n` skips a run if the previous one is still going (a swap-heavy run can be long).
-- Drop `SOCIAL=1` to run catalog-only (no Apify spend) on some weeks.
+- `SOCIAL=1` includes the Instagram pull (~$0.66 Apify). Drop it to run catalog-only weeks.
 
 ## 6. Operate
 
