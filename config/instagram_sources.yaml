@@ -1,0 +1,78 @@
+# Instagram sources for EARLY trend detection (via HikerAPI).
+# =============================================================================
+# Goal: catch trends 1–2 seasons before they're obvious. So this list is weighted
+# toward TREND-LEADERS (early adopters) — influencers and aspirational/international
+# brands — with our direct competitors kept as the CONFIRMATION layer, not discovery.
+#
+# ⚠️ HANDLES ARE A DRAFT — VERIFY BEFORE TRUSTING.
+# Handles change, and some below are best-guess. The scraper validates every handle
+# at run time (HikerAPI user lookup) and skips + logs any that don't resolve, so a
+# wrong handle fails soft. The INFLUENCER list especially is a starting point for YOU
+# to correct/extend — you know who your customer actually follows. Edit freely.
+#
+# Per-account fields:
+#   handle:   Instagram username WITHOUT the @
+#   type:     intl_brand | indian_brand | influencer | trend_account | competitor
+#   weight:   1.0 = strong trend-leader (count heavily), 0.5 = confirmation only
+#   enabled:  true = scrape this source; false = skip
+#   note:     why it's here
+#
+# Politeness / cost: HikerAPI is pay-as-you-go (~$0.001/request). `posts_per_account`
+# and `posts_per_hashtag` below cap how much we pull each run so cost stays a few $/mo.
+# =============================================================================
+
+geo: IN
+posts_per_account: 12     # latest N posts per account each run
+posts_per_hashtag: 30     # latest N posts per hashtag each run
+hashtag_sort: top         # "top" (higher-engagement) or "recent"
+
+# -----------------------------------------------------------------------------
+# ACCOUNTS
+# -----------------------------------------------------------------------------
+accounts:
+  # --- International aspirational / fast-moving brands (lead India by ~6–12 wks) ---
+  # These brand handles are widely-known; still re-verify on first run.
+  - {handle: zara,            type: intl_brand, weight: 1.0, enabled: true,  note: Global fast-fashion tempo-setter; silhouette + colour direction.}
+  - {handle: mango,           type: intl_brand, weight: 1.0, enabled: true,  note: Accessible premium; dresses/co-ords/embellishment cadence.}
+  - {handle: cos,             type: intl_brand, weight: 1.0, enabled: true,  note: Minimalist contemporary; linen/structured. VERIFY handle.}
+  - {handle: andotherstories, type: intl_brand, weight: 1.0, enabled: true,  note: Premium-contemporary; print/embroidery/lace narrative.}
+  - {handle: aritzia,         type: intl_brand, weight: 1.0, enabled: true,  note: Contemporary; vacation/occasion, print-led.}
+  - {handle: sezane,          type: intl_brand, weight: 1.0, enabled: true,  note: French contemporary; vacation/linen; warm-neutral palette (on-brand).}
+  - {handle: realisationpar,  type: intl_brand, weight: 1.0, enabled: true,  note: Premium dresses (silk/linen/cutwork); trickles down to mid-market.}
+  - {handle: reformation,     type: intl_brand, weight: 1.0, enabled: true,  note: Sustainable contemporary; vacation/occasion; colour + print direction.}
+  - {handle: houseofcb,       type: intl_brand, weight: 0.8, enabled: false, note: Occasion/party dresses; embellishment. Enable if occasion-wear matters.}
+
+  # --- Indian influencers / creators (EARLIEST human signal) ---
+  # ⚠️ VERIFY EVERY ONE — these are well-known names but confirm handles + that their
+  #     audience matches your 22–40 urban customer. Add the ones you personally rate.
+  - {handle: komalpandeyofficial, type: influencer, weight: 1.0, enabled: false, note: High-engagement styling; remixes contemporary pieces. VERIFY.}
+  - {handle: thatbohogirl,        type: influencer, weight: 1.0, enabled: false, note: Kritika Khurana; boho/contemporary; trend-forward. VERIFY.}
+  - {handle: masoomminawala,      type: influencer, weight: 1.0, enabled: false, note: Global+Indian fashion; aspirational. VERIFY.}
+  - {handle: sejalkumar1195,      type: influencer, weight: 1.0, enabled: false, note: Contemporary everyday styling; young urban audience. VERIFY.}
+  - {handle: aashnashroff,        type: influencer, weight: 1.0, enabled: false, note: Luxury/contemporary crossover styling. VERIFY.}
+  - {handle: juhi_godambe,        type: influencer, weight: 1.0, enabled: false, note: Contemporary + resort; brand founder + creator. VERIFY.}
+  - {handle: santoshishetty,      type: influencer, weight: 1.0, enabled: false, note: Fashion/architecture; contemporary silhouettes. VERIFY.}
+  - {handle: stylebysakshi,       type: influencer, weight: 1.0, enabled: false, note: Inclusive-size contemporary styling. VERIFY.}
+
+  # --- International trend / street-style / forecast accounts (meta-signal) ---
+  - {handle: voguefashion,    type: trend_account, weight: 0.7, enabled: false, note: Runway/editorial trend canon. VERIFY exact handle.}
+  - {handle: collagevintage,  type: trend_account, weight: 0.7, enabled: false, note: Street/contemporary styling. VERIFY.}
+
+  # --- Direct competitors (CONFIRMATION layer — low weight) ---
+  # Their IG handles; confirm on first run. We already track their catalogs.
+  - {handle: reistorofficial,  type: competitor, weight: 0.4, enabled: false, note: Reistor IG. VERIFY handle.}
+  - {handle: shopverb,         type: competitor, weight: 0.4, enabled: false, note: Verb by Pallavi Singhee IG. VERIFY handle.}
+  - {handle: thesummerhouse.in,type: competitor, weight: 0.4, enabled: false, note: The Summer House IG. VERIFY handle.}
+
+# -----------------------------------------------------------------------------
+# HASHTAGS  (noisy by design — keep targeted; the scraper tags images regardless)
+# -----------------------------------------------------------------------------
+hashtags:
+  - {tag: coordset,            weight: 1.0, enabled: true,  note: Co-ord adoption; strong India signal.}
+  - {tag: linendress,          weight: 1.0, enabled: true,  note: Garment+fabric; clean signal.}
+  - {tag: contemporaryfashion, weight: 0.8, enabled: true,  note: Contemporary-specific, less fast-fashion spam.}
+  - {tag: vacationwear,        weight: 0.8, enabled: true,  note: Occasion+aesthetic; matches Vacation Vibes.}
+  - {tag: coquetteaesthetic,   weight: 0.8, enabled: true,  note: Lace/ruching/bows — embellishment direction.}
+  - {tag: indianfashion,       weight: 0.6, enabled: false, note: Very high volume/noisy; enable + combine carefully.}
+  - {tag: printdress,          weight: 0.7, enabled: false, note: Print trend tracking.}
+  - {tag: quietluxury,         weight: 0.7, enabled: false, note: Minimal/refined direction (macro).}
