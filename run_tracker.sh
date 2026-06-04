@@ -52,19 +52,19 @@ run_phase() {
     echo "════════════════════════════════════"
     echo "  1 — SCRAPE competitor catalogs"
     echo "════════════════════════════════════"
-    run_phase "1" $PY tools/scrape_catalog.py $LIMIT_ARG
+    run_phase "1" "$PY" tools/scrape_catalog.py $LIMIT_ARG
 
     echo ""
     echo "════════════════════════════════════"
     echo "  2 — TAG garments (FashionCLIP)"
     echo "════════════════════════════════════"
-    run_phase "2" $PY tools/tag_garments.py
+    run_phase "2" "$PY" tools/tag_garments.py
 
     echo ""
     echo "════════════════════════════════════"
     echo "  3 — UPDATE persistent catalog"
     echo "════════════════════════════════════"
-    run_phase "3" $PY tools/update_catalog.py
+    run_phase "3" "$PY" tools/update_catalog.py
 
     echo ""
     echo "════════════════════════════════════"
@@ -72,7 +72,7 @@ run_phase() {
     echo "════════════════════════════════════"
     # Fail-soft: a Google Trends hiccup must not block the report. analyze_trends
     # simply omits the search/cross-source sections if this produced nothing.
-    run_phase "4" $PY tools/google_trends.py
+    run_phase "4" "$PY" tools/google_trends.py
 
     # Optional SOCIAL layer (Instagram via Apify). Opt in with SOCIAL=1 — it spends
     # Apify credit (~$0.66/run at the current source list), so it's off by default and
@@ -82,32 +82,32 @@ run_phase() {
         echo "════════════════════════════════════"
         echo "  S1 — SCRAPE Instagram (Apify)"
         echo "════════════════════════════════════"
-        run_phase "S1" $PY tools/scrape_instagram.py
+        run_phase "S1" "$PY" tools/scrape_instagram.py
 
         echo ""
         echo "════════════════════════════════════"
         echo "  S2 — TAG social images (FashionCLIP)"
         echo "════════════════════════════════════"
-        run_phase "S2" $PY tools/tag_garments.py --social
+        run_phase "S2" "$PY" tools/tag_garments.py --social
 
         echo ""
         echo "════════════════════════════════════"
         echo "  S3 — UPDATE social engagement memory"
         echo "════════════════════════════════════"
-        run_phase "S3" $PY tools/update_social.py
+        run_phase "S3" "$PY" tools/update_social.py
     fi
 
     echo ""
     echo "════════════════════════════════════"
     echo "  5 — ANALYZE trends (pandas)"
     echo "════════════════════════════════════"
-    run_phase "5" $PY tools/analyze_trends.py
+    run_phase "5" "$PY" tools/analyze_trends.py
 
     echo ""
     echo "════════════════════════════════════"
     echo "  6 — BUILD weekly PDF report"
     echo "════════════════════════════════════"
-    run_phase "6" $PY tools/build_pdf.py
+    run_phase "6" "$PY" tools/build_pdf.py
 
     echo ""
     echo "=== Done — $(date) ==="

@@ -53,7 +53,10 @@ def main():
 
     in_file = args.input
     if not in_file:
-        files = sorted(TMP.glob("tagged_*.json"), reverse=True)
+        # Exclude tagged_social_*.json — that's the Instagram feed (has `posts`, not
+        # `products`) and belongs to update_social.py, not the catalog.
+        files = [f for f in sorted(TMP.glob("tagged_*.json"), reverse=True)
+                 if "social" not in f.name]
         if not files:
             print("ERROR: no tagged_*.json in .tmp/ — run tag_garments.py first.")
             return

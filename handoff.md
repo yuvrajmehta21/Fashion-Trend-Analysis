@@ -49,6 +49,14 @@ builder — but shares no code).
   HikerAPI onto **Apify** (`apify/instagram-scraper`); first real pull banked **195 posts
   + images** across 8 brands + 5 hashtags for **$0.53** of the free $5/mo credit. Same
   output schema as before, so downstream tagging/scoring is unchanged. See §7.
+- **Full social layer LIVE** (2026-06-04): social images tagged with FashionCLIP, new
+  `update_social.py` banks engagement-weighted memory, `analyze_trends.py` does
+  emerging-trend detection + social cross-source, `build_pdf.py` has a Social section.
+- **First REAL retail baseline run done** (2026-06-04): full catalogs scraped + tagged →
+  **2,299 items across 6 brands** (Reistor 660, Salt Attire 459, Summer House 418, Verb
+  412, Azurina 233, Label by Mohita 117; **Saaki skipped — robots.txt disallows
+  /products.json**). `data/catalog.json` now holds this baseline. A complete **21-page
+  retail+social PDF** was generated and verified page-by-page (`.tmp/trend_report_2026-06-04.pdf`).
 
 ### 🚧 IN PROGRESS / BLOCKED
 - **Awaiting executives' list** of brands/accounts/influencers they most want monitored
@@ -327,8 +335,22 @@ Instagram Graph API can't see competitor/influencer posts (kills the trend-leade
 - **`sort_by` is ignored on `products.json`** — no bestseller rank.
 - **Don't ship unverified code as "done"** — the owner pushed back on this; build, then
   verify live, then claim it works.
-- **`.env` holds the HikerAPI token** (gitignored). Never echo it, never commit it, never
-  put the value in any tracked file (including this handoff).
+- **`.env` holds API tokens** (`APIFY_TOKEN`; legacy `HIKERAPI_KEY`) — gitignored. Never
+  echo, commit, or put a value in any tracked file (including this handoff).
+- **`run_tracker.sh` must quote `"$PY"`** — the project path has spaces ("Fashion Trend
+  Analysis"), so an unquoted `$PY` splits and every phase fails with "No such file or
+  directory". Fixed 2026-06-04; keep it quoted.
+- **`tagged_social_*.json` collides with `update_catalog.py`'s `tagged_*` glob** — it has
+  `posts`, not `products`, so update_catalog silently recorded 0 items. Fixed by excluding
+  `social` from the glob. Watch this if you add more `tagged_*`-named outputs.
+- **Baseline-run semantics (no prior week):** there's no real velocity yet, so the report
+  shows a *snapshot* not "rising", and **cross-source is omitted** (its catalog "delta"
+  would just be the current share — misleading as growth). It returns from run 2. Also:
+  baseline bar rows use the `share` key (rising rows use `current_share`) — `build_pdf`
+  reads both.
+- **Don't let "New This Week" render the whole catalog on a baseline** — every item is
+  "new", so the grid is capped (`NEW_MAX_CARDS`) to a sample; the full set still feeds the
+  attribute analysis. (An uncapped baseline tried to embed 2,299 images → ~383 pages.)
 
 ---
 

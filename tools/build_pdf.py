@@ -41,6 +41,8 @@ ATTR_LABEL = {
     "fabric_guess": "Fabric (guess)",
 }
 GRID_PER_PAGE = 6   # 2 rows × 3 cols per "New This Week" page (fits A4 landscape cleanly)
+NEW_MAX_CARDS = 24  # cap the New-this-week grid (4 pages). On a baseline run EVERY item is
+                    # "new", so without a cap the report would embed thousands of images.
 
 
 # ---------------------------------------------------------------------------
@@ -76,6 +78,15 @@ def _cover(data: dict) -> str:
     prev = data.get("previous_date")
     period = ("Baseline edition — first reading"
               if baseline else f"Versus {html.escape(str(prev))}")
+    social_posts = (data.get("social") or {}).get("posts", 0)
+    # On a baseline run "new this week" = the whole catalog, which misleads — relabel,
+    # and surface the social sample instead of an all-zero sell-through row.
+    if baseline:
+        new_label, new = "Garments tagged", new
+        third_label, third_val = "Social posts read", social_posts
+    else:
+        new_label = "New this week"
+        third_label, third_val = "Selling out", selling
     return f"""
 <section class="cover">
   <div class="cover-left">
@@ -90,8 +101,8 @@ def _cover(data: dict) -> str:
   <div class="cover-summary">
     <div class="cover-summary-heading">This edition</div>
     <div class="cover-summary-row"><span class="cat-name">Live items tracked</span><span class="cat-count">{live}</span></div>
-    <div class="cover-summary-row"><span class="cat-name">New this week</span><span class="cat-count">{new}</span></div>
-    <div class="cover-summary-row"><span class="cat-name">Selling out</span><span class="cat-count">{selling}</span></div>
+    <div class="cover-summary-row"><span class="cat-name">{new_label}</span><span class="cat-count">{new}</span></div>
+    <div class="cover-summary-row"><span class="cat-name">{third_label}</span><span class="cat-count">{third_val}</span></div>
   </div>
 </section>
 """
@@ -142,17 +153,26 @@ def _new_this_week_pages(data: dict) -> str:
     if not items:
         return ('<section class="grid-page"><div class="empty-note">'
                 'No newly dropped garments detected this week.</div></section>')
+    total = len(items)
+    shown = items[:NEW_MAX_CARDS]
+    note = ""
+    if total > NEW_MAX_CARDS:
+        baseline = data.get("is_baseline")
+        what = ("the baseline catalog" if baseline else "this week's new arrivals")
+        note = (f'<p class="section-note">Showing {len(shown)} of {total:,} — a sample of '
+                f'{what}. The full set feeds the attribute analysis on the following pages.</p>')
     pages = []
-    for start in range(0, len(items), GRID_PER_PAGE):
-        chunk = items[start:start + GRID_PER_PAGE]
-        cards = "".join(_new_card(it) for it in chunk)
-        pages.append(f'<section class="grid-page"><div class="grid">{cards}</div></section>')
+    for start in range(0, len(shown), GRID_PER_PAGE):
+        cards = "".join(_new_card(it) for it in shown[start:start + GRID_PER_PAGE])
+        head = note if start == 0 else ""
+        pages.append(f'<section class="grid-page">{head}<div class="grid">{cards}</div></section>')
     return "".join(pages)
 
 
 def _bar_row(r: dict, baseline: bool) -> str:
     value = html.escape(str(r["value"]))
-    share = r.get("current_share", 0)
+    # rising rows carry `current_share`; baseline snapshot rows carry `share`.
+    share = r.get("current_share", r.get("share", 0))
     count = r.get("current_count", r.get("count", 0))
     width = max(2, round(share * 100))
     if baseline:
@@ -296,14 +316,21 @@ def _cross_source_page(data: dict) -> str:
                 f'<div class="corro-cell">search {sv}</div>'
                 f'<div class="corro-cell">catalog {cd_s}</div>'
                 f'<div class="corro-mark">{mark}</div></div>')
-    rows = "".join(fmt(c) for c in cs[:12])
     note = ('<p class="section-note">Where the demand signal (search) and the supply signal '
             '(competitor catalogs / sell-through) point the same way. Corroborated rows are '
             'the highest-confidence trends.</p>')
     header = ('<div class="corro head"><div class="corro-term">Style keyword</div>'
               '<div class="corro-cell">Search</div><div class="corro-cell">Catalog</div>'
               '<div class="corro-mark"></div></div>')
-    return f'<section class="trend-page"><h2 class="attr-title">Cross-source trends</h2>{note}{header}{rows}</section>'
+    # Paginate (top-aligned) so many keywords never overflow a fixed-height page.
+    per = 9
+    chunks = [cs[i:i + per] for i in range(0, min(len(cs), 24), per)]
+    pages = []
+    for idx, chunk in enumerate(chunks):
+        rows = "".join(fmt(c) for c in chunk)
+        head = (f'<h2 class="attr-title">Cross-source trends</h2>{note}' if idx == 0 else "")
+        pages.append(f'<section class="trend-page search-page">{head}{header}{rows}</section>')
+    return "".join(pages)
 
 
 # ---- Social / emerging (Instagram engagement signal) -----------------------
@@ -515,12 +542,20 @@ def build_html(data: dict) -> str:
     run = html.escape(str(data.get("run_date", "")))
     baseline = data.get("is_baseline")
     new_count = data.get("new_count", 0)
+    live_count = data.get("live_count", 0)
+    new_title = "Catalog Baseline" if baseline else "New This Week"
+    new_sub = (f"{live_count:,} items now tracked" if baseline
+               else f"{new_count} newly dropped garments")
     trend_title = "Current Snapshot" if baseline else "Rising Attributes"
     trend_sub = ("Where the live catalog sits today" if baseline
                  else "Gaining share versus last week")
     selling_count = data.get("selling_out_count", 0)
     has_search = bool(data.get("search_keywords"))
-    has_cross = bool(data.get("cross_source"))
+    # Cross-source corroboration needs week-over-week velocity on BOTH sides. On a baseline
+    # run the catalog has no prior, so its "delta" is just the current share — showing it as
+    # growth would be misleading. Omit until the second run (mirrors how baseline suppresses
+    # "Rising Attributes" in favour of a snapshot).
+    has_cross = bool(data.get("cross_source")) and not baseline
 
     # Search-interest + cross-source sections only appear when google_trends ran.
     search_block = ""
@@ -547,7 +582,7 @@ def build_html(data: dict) -> str:
     return f"""<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">
 <title>Style Island Trend Report {run}</title><style>{CSS}</style></head><body>
 {_cover(data)}
-{_section_divider("New This Week", f"{new_count} newly dropped garments")}
+{_section_divider(new_title, new_sub)}
 {_new_this_week_pages(data)}
 {_section_divider("Selling Out", f"{selling_count} garments moving fast")}
 {_selling_out_pages(data)}
