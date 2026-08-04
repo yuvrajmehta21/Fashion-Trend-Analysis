@@ -60,9 +60,29 @@ run_phase() {
     echo "  1 — SCRAPE competitor catalogs"
     echo "════════════════════════════════════"
     run_phase "1" "$PY" tools/scrape_catalog.py $LIMIT_ARG
-    # rc=2 means every store returned nothing — an outage, not an empty market. Phases
-    # 2–3 would then feed the catalog stale or empty data, so the retail half is skipped
-    # entirely. (rc=3 is a partial scrape: degraded, recorded, but still worth banking.)
+
+    # rc=2 = every store returned nothing. Shopify's edge rate-limits by IP in windows
+    # that outlast any sane in-request backoff: on 2026-08-04 all 7 stores 429'd for a
+    # solid 20 minutes, then served 200s to the same headers minutes later. So the useful
+    # retry is at the RUN level, far apart — not another round of fast retries.
+    # We run weekly; waiting is free. SCRAPE_RETRY_WAIT=0 disables (used by tests).
+    if [[ $PHASE_RC -eq 2 && "${SCRAPE_RETRY_WAIT:-2700}" -gt 0 ]]; then
+        WAIT="${SCRAPE_RETRY_WAIT:-2700}"
+        echo ""
+        echo "  Every store returned 0 — almost certainly an IP-level rate-limit window."
+        echo "  Waiting ${WAIT}s before one more attempt before writing the week off."
+        sleep "$WAIT"
+        # Drop the first attempt's failure; this retry's result is the one that counts.
+        # Rebuild by element — entries contain spaces, so any re-splitting corrupts them.
+        _kept=()
+        for _f in "${FAILURES[@]}"; do
+            [[ "$_f" == "1 (rc=2)" ]] || _kept+=("$_f")
+        done
+        FAILURES=(${_kept[@]+"${_kept[@]}"})
+        run_phase "1-retry" "$PY" tools/scrape_catalog.py $LIMIT_ARG
+    fi
+
+    # (rc=3 is a partial scrape: degraded, recorded, but still worth banking.)
     RETAIL_OK=1
     if [[ $PHASE_RC -eq 2 ]]; then
         RETAIL_OK=0
