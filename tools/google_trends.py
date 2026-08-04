@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 import time
 from datetime import date
 from pathlib import Path
@@ -52,14 +53,44 @@ def _load_config() -> dict:
 MIN_VOLUME = 10.0
 
 
+CURRENT_WINDOW = 7      # days averaged into "current interest" — see below
+MAX_PARTIAL_TAIL = 2    # trailing zero-days treated as an incomplete bucket, not a signal
+
+
+def _drop_partial_tail(vals: list) -> list:
+    """Strip a SHORT run of trailing zeros — Google's still-accumulating final bucket(s).
+
+    Bounded deliberately: a term that genuinely falls to zero for a fortnight is real
+    signal and must survive. Only a 1–2 day tail on an otherwise non-zero series is
+    treated as an artifact. Belt-and-braces with the isPartial filter in main(); this
+    also protects velocity, whose 14-day mean was being dragged down by that same zero.
+    """
+    if not any(vals):
+        return vals
+    tail = 0
+    while tail < len(vals) and vals[len(vals) - 1 - tail] == 0:
+        tail += 1
+    return vals[:len(vals) - tail] if 0 < tail <= MAX_PARTIAL_TAIL else vals
+
+
 def _velocity(series) -> tuple:
     """Return (current_interest, velocity_pct, low_volume). Velocity = recent 14-day mean
     vs the prior 14-day mean, as a fraction — but only when there's enough search volume
-    to trust it; otherwise velocity is None and low_volume is True."""
+    to trust it; otherwise velocity is None and low_volume is True.
+
+    `current` is the mean of the last CURRENT_WINDOW days, NOT the final day. A single
+    day of a `today 3-m` (daily) series is noisy, and the final bucket is often partial —
+    reading it directly gave interest=0 on 87% of runs (Jun–Aug 2026), which silently
+    made `search_rising` in analyze_trends impossible and killed cross-source
+    corroboration for 10 straight weeks. Partial rows are dropped upstream in main();
+    the window is the second line of defence against a single flaky day.
+    """
     vals = [v for v in series.tolist() if v is not None]
+    vals = _drop_partial_tail(vals)
     if not vals:
         return None, None, True
-    current = float(vals[-1])
+    window = vals[-CURRENT_WINDOW:]
+    current = round(sum(window) / len(window), 1)
     if len(vals) < 28:
         return current, None, current < MIN_VOLUME
     recent = sum(vals[-14:]) / 14.0
@@ -107,7 +138,7 @@ def main():
         from pytrends.request import TrendReq
     except ImportError:
         print("ERROR: pytrends not installed. `pip install pytrends`. Skipping (fail-soft).")
-        return
+        return 1
 
     pytrends = TrendReq(hl="en-US", tz=330, timeout=(10, 25))   # tz 330 = IST
 
@@ -120,6 +151,13 @@ def main():
         df = _fetch_batch(pytrends, batch, geo, timeframe)
         if df is None or df.empty:
             continue
+        # Google marks the still-accumulating final bucket isPartial=True. Its value is
+        # a fraction of the real one (usually 0), so it must never be read as interest.
+        if "isPartial" in df.columns:
+            df = df[~df["isPartial"].astype(bool)]
+            if df.empty:
+                print(f"   ! batch {batch}: every row partial — skipping (fail-soft)")
+                continue
         for term in batch:
             if term not in df.columns:
                 continue
@@ -146,6 +184,12 @@ def main():
     (TMP / f"keywords_{run_date}.json").write_text(json.dumps(out, indent=2, ensure_ascii=False))
 
     print(f"\nFetched {fetched}/{len(terms)} keywords.")
+    if not fetched:
+        # Don't claim to have saved a store we never touched, and don't let a total
+        # blackout read as a clean phase — Google 429s whole IPs for hours at a time.
+        print("No keyword data returned (Google is likely rate-limiting this IP).")
+        print(f"data/keywords.json left UNCHANGED — prior history preserved.")
+        return 1
     # show the strongest movers
     movers = sorted(
         [(t, d["velocity"], d["interest"]) for t, d in snapshot.items() if d.get("velocity") is not None],
@@ -154,7 +198,9 @@ def main():
     for t, v, interest in movers[:6]:
         print(f"   {t}: interest {interest:.0f}, velocity {v:+.0%}")
     print(f"Saved → data/keywords.json + .tmp/keywords_{run_date}.json")
+    # A partial fetch is worth banking but still worth flagging.
+    return 0 if fetched == len(terms) else 3
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main() or 0)

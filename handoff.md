@@ -1,7 +1,12 @@
 # Fashion Trend Analysis — Handoff
 
-_Last updated: 2026-06-04. This is the single source of truth for picking the project up
-cold. Read top-to-bottom once, then use the file-by-file reference as needed._
+_Last updated: 2026-08-04. This is the single source of truth for picking the project up
+cold. Read top-to-bottom once, then use the file-by-file reference as needed. Standing
+operational facts live in `CLAUDE.md`, not here._
+
+> ⚠️ **Stale-state notice (2026-08-04):** the narrative below was written on 2026-06-04 and
+> has not been re-verified since. The droplet has presumably run its weekly cron ~8 times.
+> **Before trusting any "how much data do we have" claim, check the droplet**, not this file.
 
 ---
 
@@ -24,9 +29,10 @@ builder — but shares no code).
 
 - **Repo:** https://github.com/yuvrajmehta21/Fashion-Trend-Analysis (PUBLIC, branch `main`)
 - **Latest commit:** `5dcf004` (pin transformers<5 / pandas<3) — see §12
-- **Local path:** `/Users/yuvrajmehta/Desktop/Code/Fashion Trend Analysis`
-- **Deployed on:** DigitalOcean droplet `139.59.34.167`, weekly cron Mon 06:00 IST — see §13
+- **Local path:** `/Users/yuvrajmehta/Desktop/Automations/Fashion Trend Analysis`
 - **Owner email (reports):** yuvrajmehta05@gmail.com (sent from yuvrajmehta2107@gmail.com)
+- Deployment coordinates, the schedule, tuning knobs and standing warnings live in
+  **`CLAUDE.md`** (auto-loaded every session) — not repeated here. See §13 for the *why*.
 
 > ⚠️ Repo is PUBLIC. Never commit secrets. `.env`, `data/`, `.tmp/`, `.venv/` are
 > gitignored. Verified safe so far.
@@ -67,10 +73,9 @@ builder — but shares no code).
   (owner asked them; will paste handles later).
 
 ### 🔜 NOT STARTED (future)
-- Run FashionCLIP on social images + **emerging-trend detection** (the actual early-catch
-  logic) + social in cross-source + a social PDF section.
-- A real (non-simulated) baseline run.
-- Scheduling on the DigitalOcean droplet + email delivery.
+- **Bank a 2nd social run** so emerging/velocity actually populates (run 1 is a baseline
+  snapshot by definition) — arrives with the first scheduled cron run.
+- Nice-to-haves in §8: branded exec PDF, better fabric tagging, enabling more competitors.
 
 ---
 
@@ -80,8 +85,8 @@ Three signal types feed one scoring + report layer:
 - **Supply** — competitor Shopify catalogs (what's offered) + rising attributes.
 - **Demand (retail)** — sell-through (what's going out of stock = selling).
 - **Demand (search)** — Google Trends interest in style keywords.
-- **Demand (social)** — *planned* — Instagram engagement on trend-leader posts (the
-  earliest signal; not yet live, blocked on provider choice).
+- **Demand (social)** — Instagram engagement on trend-leader posts (the earliest signal).
+  LIVE via Apify since 2026-06-04; opt-in per run because it spends credit.
 
 ```
 config/competitors.yaml ─┐
@@ -101,10 +106,11 @@ config/trend_keywords ───┼─→ [4] google_trends.py ─→ data/keywor
                          │
                          └─→ [6] build_pdf.py ─────→ .tmp/trend_report_<date>.pdf (+ .html)
 
-(planned)  config/instagram_sources.yaml → scrape_instagram.py → .tmp/instagram_<date>.json
-           → feeds [2] tagging + [5] scoring once provider is chosen & verified.
+(SOCIAL=1) config/instagram_sources.yaml → scrape_instagram.py → .tmp/instagram_<date>.json
+           → [2] tag_garments.py --social → update_social.py → data/social_history.json
+           → feeds [5] scoring (emerging + cross-source) and the PDF's Social section.
 
-Orchestrated by run_tracker.sh (runs phases 1–6 in order, tee's to .tmp/tracker_<date>.log).
+Orchestrated by run_tracker.sh (phases 1–7, tee's to .tmp/tracker_<date>.log).
 ```
 
 ---
@@ -133,16 +139,16 @@ Orchestrated by run_tracker.sh (runs phases 1–6 in order, tee's to .tmp/tracke
   garment_type ← store `product_type` (authoritative; image-only mis-types full outfits);
   colour ← declared Color normalised to base colour; **neckline/sleeve/pattern/fabric ←
   FashionCLIP from image**. `needs_review` flag for low-confidence. Vision-API fallback is
-  OFF (must not enable without sign-off). `--threshold` (default 0.35).
+  OFF (must not enable without sign-off).
 - **`update_catalog.py`** — merges tagged items into `data/catalog.json`. New items get
   `first_seen`; returning items update `last_seen`, `seen_dates`, `stock_history`.
   `seen_dates` lets us reconstruct any past run's live set exactly. `--run-date`.
 - **`google_trends.py`** — pytrends, no key. Pulls ~90d India interest per keyword,
   current interest (0–100) + 14-day velocity, persists to `data/keywords.json`. **Fail-soft**
-  (retries + backoff; a Google hiccup never breaks the run). `MIN_VOLUME=10` floor →
-  low-volume terms shown as "emerging", excluded from corroboration (avoids noisy %).
+  (retries + backoff; a Google hiccup never breaks the run). A minimum-volume floor keeps
+  low-volume terms out of corroboration (they'd produce noisy %), shown as "emerging".
 - **`analyze_trends.py`** — pandas. Computes: new-this-week, rising attributes (share
-  delta), **sell-through** (items still listed whose stock dropped ≥`SELL_THROUGH_DROP`=0.25
+  delta), **sell-through** (items still listed whose stock dropped past the threshold
   or sold out), search velocity, and **cross-source** (keyword rising w/ real volume AND
   mapped attribute rising/selling-through = corroborated). First run = baseline. `--top`.
 - **`build_pdf.py`** — self-contained HTML + base64 images → headless Chromium → PDF, +
@@ -157,9 +163,10 @@ Orchestrated by run_tracker.sh (runs phases 1–6 in order, tee's to .tmp/tracke
   providers, this file gets rewritten/replaced for the new API.
 
 ### Orchestration & docs
-- **`run_tracker.sh`** — runs phases 1–6. `bash run_tracker.sh` (full) or
-  `LIMIT=20 bash run_tracker.sh` (capped). macOS PATH handling, prefers `.venv`, tee's log.
-  NOTE: does not yet include the Instagram phase (add once provider chosen + verified).
+- **`run_tracker.sh`** — the whole pipeline, phases 1–7 plus the opt-in social phases.
+  macOS PATH handling, prefers `.venv`, tee's a log. Invocations: `CLAUDE.md § Commands`.
+- **`CLAUDE.md`** — standing ops facts (deploy coordinates, schedule, knobs, warnings).
+  Auto-loaded every session; keep it lean and don't restate it here.
 - **`workflows/catalog_tracker.md`** — the full SOP / design notes + **Self-Improvement
   Log** (read this for the "why" behind decisions).
 - **`README.md`**, **`tools/README.md`** — overview + per-tool table.
@@ -171,10 +178,14 @@ Orchestrated by run_tracker.sh (runs phases 1–6 in order, tee's to .tmp/tracke
 - **`.env.example`** — template (committed). **`.env`** — real secrets (gitignored).
 
 ### State
-- **`data/catalog.json`** — persistent catalog memory. **Currently RESET/empty** (the
-  prior contents were a 2-week *simulation* with injected stock; deleted so the first real
-  run is a clean baseline).
-- **`data/keywords.json`** — real Google Trends history (from a 2026-06-02 run). Kept.
+⚠️ **`data/` is per-host.** It's gitignored, so the laptop's copy and the droplet's diverge
+the moment cron runs. The droplet's is the real one; the laptop's is whatever you last ran
+locally. Never reason about "how many weeks we have" from the local copy — check the droplet.
+
+- **`data/catalog.json`** (local copy) — **2,299 items, one run: the 2026-06-04 baseline.**
+  The earlier 2-week *simulation* was deleted so the first real run started clean.
+- **`data/keywords.json`** (local) — real Google Trends history, runs 2026-06-02 + 06-04.
+- **`data/social_history.json`** (local) — one baseline social snapshot; velocity needs a 2nd.
 - **`.tmp/`** — disposable: scrapes, downloaded images, logs, rendered PDFs/PNGs. Holds a
   demo `trend_report_2026-06-02.pdf` from the simulation (for reference only).
 
@@ -193,7 +204,7 @@ Orchestrated by run_tracker.sh (runs phases 1–6 in order, tee's to .tmp/tracke
 
 ### Run
 ```bash
-cd "/Users/yuvrajmehta/Desktop/Code/Fashion Trend Analysis"
+cd "/Users/yuvrajmehta/Desktop/Automations/Fashion Trend Analysis"
 LIMIT=20 bash run_tracker.sh      # quick capped run
 bash run_tracker.sh               # full
 # individual tools default to the most recent .tmp/ input of the prior step
@@ -342,20 +353,25 @@ Instagram Graph API can't see competitor/influencer posts (kills the trend-leade
 - Engagement ≠ sales. Social is a leading-but-noisy signal.
 
 ## 11. Gotchas / lessons learned
+
+> The ones that are permanent code-touching invariants (dependency pins, SMTP, the shared
+> droplet, the `tagged_*` glob, PDF card layout) live in **`CLAUDE.md` § Standing warnings**.
+> What follows is the narrative — how we learned them and what they cost.
+
 - **Verify pricing/free-tier claims before telling the owner** (HikerAPI "free 100" was
   wrong; cost us trust).
-- **Verify PDFs by rendering to PNG** (pymupdf), not HTML screenshots.
-- **`sort_by` is ignored on `products.json`** — no bestseller rank.
+- **Verify PDFs by rendering to PNG** (pymupdf), not HTML screenshots — paged-media
+  overflow is invisible in an HTML element screenshot. This burned us twice.
 - **Don't ship unverified code as "done"** — the owner pushed back on this; build, then
   verify live, then claim it works.
 - **`.env` holds API tokens** (`APIFY_TOKEN`; legacy `HIKERAPI_KEY`) — gitignored. Never
   echo, commit, or put a value in any tracked file (including this handoff).
-- **`run_tracker.sh` must quote `"$PY"`** — the project path has spaces ("Fashion Trend
-  Analysis"), so an unquoted `$PY` splits and every phase fails with "No such file or
-  directory". Fixed 2026-06-04; keep it quoted.
-- **`tagged_social_*.json` collides with `update_catalog.py`'s `tagged_*` glob** — it has
-  `posts`, not `products`, so update_catalog silently recorded 0 items. Fixed by excluding
-  `social` from the glob. Watch this if you add more `tagged_*`-named outputs.
+- **The dependency pins came from a real outage:** a clean install on the droplet (Python
+  3.12) pulled transformers 5.x and tagging silently produced *nothing* — no error, just
+  zero tags. Verified-good ranges are transformers 4.57 / pandas 2.3.
+- **The `tagged_social_*` glob collision** silently recorded 0 catalog items for a run —
+  same failure mode: no error, empty output. Both cost a full debug cycle because the
+  pipeline is fail-soft and happily reported success.
 - **Baseline-run semantics (no prior week):** there's no real velocity yet, so the report
   shows a *snapshot* not "rising", and **cross-source is omitted** (its catalog "delta"
   would just be the current share — misleading as growth). It returns from run 2. Also:
@@ -364,16 +380,9 @@ Instagram Graph API can't see competitor/influencer posts (kills the trend-leade
 - **Don't let "New This Week" render the whole catalog on a baseline** — every item is
   "new", so the grid is capped (`NEW_MAX_CARDS`) to a sample; the full set still feeds the
   attribute analysis. (An uncapped baseline tried to embed 2,299 images → ~383 pages.)
-- **PIN `transformers<5` and `pandas<3` in `requirements.txt`.** A fresh install (droplet,
-  Python 3.12) pulled transformers 5.x, whose `CLIPModel.get_text_features()` returns a
-  ModelOutput object, not a tensor → `feats.norm()` crashes → tagging silently produces
-  nothing. Verified ranges: transformers 4.57 / pandas 2.3.
-- **Gmail SMTP: use `SMTP_SSL` on port 465, not STARTTLS on 587** (587 fails "Server not
-  connected"), and **strip spaces from the App Password** (Google shows it spaced). Copied
-  from the Bestseller agent's working `send_email.py`.
-- **Don't change the droplet's system timezone** — it's shared with the Bestseller cron, so
-  a TZ change would shift *its* schedule. The droplet runs UTC; the weekly cron uses
-  `30 0 * * 1` (UTC) to hit 06:00 IST. Append to crontab, never replace it.
+- **The Gmail SMTP fix was borrowed, not derived** — port 587/STARTTLS failed opaquely
+  ("Server not connected") until we copied the Bestseller agent's working `send_email.py`
+  wholesale. Check that project first when a shared concern misbehaves.
 
 ---
 
@@ -390,29 +399,22 @@ Instagram Graph API can't see competitor/influencer posts (kills the trend-leade
 
 ---
 
-## 13. Deployment (LIVE — 2026-06-04)
+## 13. Deployment — why it looks like this (LIVE since 2026-06-04)
 
-**Where it runs:** existing DigitalOcean droplet **`139.59.34.167`** (Ubuntu 24.04, 2 GB
-RAM + 2 GB swap, 1 vCPU). SSH as `root` from the owner's Mac (key auth, port 22). The repo
-lives at `/root/Fashion-Trend-Analysis`; secrets in `/root/Fashion-Trend-Analysis/.env`
-(`chmod 600`, scp'd up — never via git). FashionCLIP needs ~1.5–2 GB at peak, hence the
-RAM bump + swap (the 1 GB default OOMs).
+> Coordinates, cron line and operating commands: **`CLAUDE.md`**. Setup steps: **`DEPLOY.md`**.
+> This section is only the reasoning behind those choices.
 
-**Schedule:** cron, **Mon 06:00 IST** (`30 0 * * 1` UTC):
-```
-30 0 * * 1 cd /root/Fashion-Trend-Analysis && mkdir -p .tmp && /usr/bin/flock -n /tmp/fashion-tracker.lock env SOCIAL=1 bash run_tracker.sh >> .tmp/cron.log 2>&1
-```
-The droplet also runs the **Bestseller agent** (`30 2 1,15 * *`) — left untouched; we
-appended, never replaced. `SOCIAL=1` includes the Apify Instagram pull (~$0.53/run).
-
-**Email:** delivered to **yuvrajmehta05@gmail.com**, sent from **yuvrajmehta2107@gmail.com**
-(Gmail App Password in `.env`), gated on `REPORT_SHARING_ENABLED=true`.
-
-**Operate (from the owner's Mac):**
-- Code change: `git push` locally → `ssh root@139.59.34.167 'cd Fashion-Trend-Analysis && git pull'`.
-- Rotate a secret: re-`scp .env` up.
-- Watch a run: `ssh root@139.59.34.167 'tail -f Fashion-Trend-Analysis/.tmp/cron.log'`.
-- Pause: edit crontab and comment the Style Island line (leave Bestseller's intact).
-- Full setup steps + droplet-sizing rationale live in **`DEPLOY.md`**.
-
-**Cost:** droplet (already owned) + Apify ~$2.86/mo (inside the free $5) ≈ negligible new spend.
+- **Reused the existing droplet** rather than a new host: it was already owned and idle
+  outside the Bestseller agent's twice-monthly window, so marginal cost is zero. The price
+  is a shared machine — hence the "append to crontab, don't touch the TZ" rule.
+- **RAM was the binding constraint,** not CPU. FashionCLIP peaks ~1.5–2 GB; the 1 GB
+  droplet OOM-killed mid-tagging. Resized to 2 GB + 2 GB swap instead of moving to GPU —
+  our volumes tag fine on CPU in a few minutes.
+- **Weekly, Monday early morning** so the report is waiting before the owner's week starts,
+  and because trend deltas need a week to mean anything (daily would be noise).
+- **`flock`-guarded** because a slow run must never overlap the next one and double-spend
+  Apify credit.
+- **Email rather than a dashboard** — the owner wanted zero new logins. Delivery is gated
+  behind `REPORT_SHARING_ENABLED` so a test run on any machine can't mail the owner.
+- **Cost:** droplet already owned + Apify ~$2.86/mo (inside the free $5) ≈ negligible.
+- **Pause it** by commenting the Style Island crontab line (leave Bestseller's intact).

@@ -194,6 +194,45 @@ def normalise_product(p: dict, store: dict, currency: tuple[str, str]) -> dict:
 # Fetching
 # ---------------------------------------------------------------------------
 
+# Shopify's edge throttles datacenter IPs. On 2026-08-03 all 7 stores returned 429 in
+# the same minute and the run banked an empty scrape; 2026-07-06 lost 4 stores to 503s.
+# A single request attempt is not enough from the droplet.
+RETRY_STATUSES = {429, 500, 502, 503, 504}
+FETCH_RETRIES = 4
+RETRY_BACKOFF = 20        # seconds: 20, 40, 80, 160 — deliberately patient, we run weekly
+MAX_RETRY_AFTER = 300     # cap on an honoured Retry-After header
+
+
+def _get_with_retry(url: str) -> requests.Response:
+    """GET with backoff on throttle/5xx. Honours Retry-After when the server sends it.
+    Raises the last error if every attempt fails, so the caller can fail that store."""
+    last_exc = None
+    for attempt in range(1, FETCH_RETRIES + 1):
+        try:
+            r = requests.get(url, headers=HEADERS, timeout=30)
+            if r.status_code in RETRY_STATUSES and attempt < FETCH_RETRIES:
+                wait = RETRY_BACKOFF * (2 ** (attempt - 1))
+                try:
+                    wait = min(int(r.headers.get("Retry-After", wait)), MAX_RETRY_AFTER)
+                except (TypeError, ValueError):
+                    pass
+                print(f"      ! {r.status_code} — retry {attempt}/{FETCH_RETRIES - 1} in {wait}s")
+                time.sleep(wait)
+                continue
+            r.raise_for_status()
+            return r
+        except requests.RequestException as e:
+            last_exc = e
+            if attempt >= FETCH_RETRIES:
+                break
+            wait = RETRY_BACKOFF * (2 ** (attempt - 1))
+            print(f"      ! {e.__class__.__name__} — retry {attempt}/{FETCH_RETRIES - 1} in {wait}s")
+            time.sleep(wait)
+    if last_exc:
+        raise last_exc
+    raise requests.RequestException(f"exhausted retries for {url}")
+
+
 def fetch_products(base_url: str, collection: str | None, limit: int | None) -> list[dict]:
     """Page through a store's products.json (optionally scoped to a collection)."""
     if collection:
@@ -205,8 +244,7 @@ def fetch_products(base_url: str, collection: str | None, limit: int | None) -> 
     page = 1
     while True:
         url = f"{endpoint}?limit={PAGE_SIZE}&page={page}"
-        r = requests.get(url, headers=HEADERS, timeout=30)
-        r.raise_for_status()
+        r = _get_with_retry(url)
         batch = r.json().get("products", [])
         if not batch:
             break
@@ -332,6 +370,19 @@ def main():
         print(f"   {s['name']}: {s['count']}")
     print(f"Saved → {out_file}")
 
+    # Signal degraded scrapes to the orchestrator. Downstream phases treat a thin week
+    # as real market movement, so a partial scrape must be loud, not silent.
+    empty = [s for s in store_summaries if not s["count"]]
+    if not all_products:
+        print("\nFAILED — every store returned 0 products. This is an outage, not an "
+              "empty market; downstream phases must not treat it as a week of data.")
+        return 2
+    if empty:
+        print(f"\nDEGRADED — {len(empty)}/{len(selected)} stores returned nothing: "
+              f"{', '.join(s['key'] for s in empty)}")
+        return 3
+    return 0
+
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main() or 0)

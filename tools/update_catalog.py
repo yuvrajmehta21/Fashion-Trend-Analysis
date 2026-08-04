@@ -15,12 +15,20 @@ For each tagged product:
 Input:  .tmp/tagged_<date>.json   (from tag_garments.py)
 Output: data/catalog.json         (updated in place)
         .tmp/run_summary_<date>.json (what changed this run, for logging/PDF)
+
+REFUSES to run on an input whose date doesn't match the run date. On 2026-08-03 every
+store 429'd, tag_garments wrote no file, and the "newest tagged_*.json" default silently
+picked up the PREVIOUS week's file — recording 2,352 items as live on a day nothing was
+scraped. That poisons seen_dates and flatlines sell-through, invisibly. Stamping the
+wrong date into memory is worse than skipping a week, so a mismatch is now a hard error.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import re
+import sys
 from datetime import date
 from pathlib import Path
 
@@ -30,6 +38,15 @@ DATA = ROOT / "data"
 CATALOG = DATA / "catalog.json"
 
 TODAY = str(date.today())
+
+
+_DATE_IN_NAME = re.compile(r"(\d{4}-\d{2}-\d{2})")
+
+
+def input_date(path: Path) -> str | None:
+    """The run date encoded in a tagged_<date>.json filename, if any."""
+    m = _DATE_IN_NAME.search(path.name)
+    return m.group(1) if m else None
 
 
 def load_catalog() -> dict:
@@ -49,6 +66,9 @@ def main():
                         help="tagged_<date>.json (default: most recent in .tmp/).")
     parser.add_argument("--run-date", default=TODAY,
                         help="Date to stamp as first_seen for new items (default: today).")
+    parser.add_argument("--allow-stale", action="store_true",
+                        help="Permit an input whose date differs from --run-date. Only for "
+                             "back-dated replays; never in the scheduled pipeline.")
     args = parser.parse_args()
 
     in_file = args.input
@@ -59,13 +79,32 @@ def main():
                  if "social" not in f.name]
         if not files:
             print("ERROR: no tagged_*.json in .tmp/ — run tag_garments.py first.")
-            return
+            return 1
         in_file = files[0]
 
     run_date = args.run_date
+
+    # --- Guards: never write a run we can't stand behind -------------------------
+    # A mismatch means this run's scrape or tagging didn't produce a file and we've
+    # fallen back to an older one. Recording it would fabricate a week of history.
+    src_date = input_date(in_file)
+    if src_date and src_date != run_date and not args.allow_stale:
+        print(f"ERROR: {in_file.name} is from {src_date}, but the run date is {run_date}.")
+        print("       Refusing to stamp stale data as this run — the upstream phase")
+        print("       (scrape or tag) most likely failed. Fix that, or pass")
+        print("       --allow-stale/--run-date deliberately for a back-dated replay.")
+        return 1
+
     print(f"Reading: {in_file}")
     data = json.loads(in_file.read_text())
     products = data.get("products", [])
+
+    # An empty scrape is an outage, not a market with zero garments in it. Writing it
+    # would flatline sell-through and report "0 new" as if it were a finding.
+    if not products:
+        print(f"ERROR: {in_file.name} holds 0 products — treating as a failed scrape,")
+        print("       not an empty market. Catalog left untouched.")
+        return 1
 
     catalog = load_catalog()
     items = catalog["items"]
@@ -138,7 +177,8 @@ def main():
     print(f"Run {run_date}: {len(products)} scraped — "
           f"{len(new_ids)} new, {len(returning_ids)} returning.")
     print(f"Catalog now holds {len(items)} items → {CATALOG}")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main() or 0)

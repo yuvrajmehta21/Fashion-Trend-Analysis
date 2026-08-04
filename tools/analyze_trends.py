@@ -335,9 +335,12 @@ def main():
         if not maps_to:
             continue
         vel = kd.get("velocity")
-        # Require real search volume (interest ≥ 10) before trusting a velocity as a
-        # demand signal — low-volume niche terms produce noisy percentages.
-        search_rising = (vel is not None and vel > 0 and (kd.get("interest") or 0) >= 10)
+        # Require real search volume before trusting a velocity as a demand signal —
+        # low-volume niche terms produce noisy percentages. Use the `low_volume` flag
+        # google_trends.py already derived from 14-day means; re-deriving it here from
+        # the single `interest` value duplicated MIN_VOLUME and inherited that value's
+        # noise (it was the second half of the 10-week corroboration outage).
+        search_rising = (vel is not None and vel > 0 and not kd.get("low_volume", False))
         catalog_delta = None
         in_sellthrough = False
         social_delta = None
@@ -367,9 +370,14 @@ def main():
             "catalog_rising":  catalog_rising,
             "social_rising":   social_rising,
             "signals":         signals,
-            # corroborated = the demand signal (search) agrees with a supply/leading
-            # signal (catalog/sell-through OR social engagement momentum).
-            "corroborated":    bool(search_rising and (catalog_rising or social_rising)),
+            # corroborated = ANY TWO of the three independent sources agree.
+            #
+            # This used to require search AND (catalog OR social), which made Google
+            # Trends a single point of failure for the whole feature. Trends is thin for
+            # niche English style terms in India (most read low-volume by design), so
+            # weeks where catalog and social independently agreed were still reported as
+            # uncorroborated. Search is one vote now, not a veto.
+            "corroborated":    signals >= 2,
         })
     # most agreeing signals first, then corroborated, then by search velocity
     cross_source.sort(
