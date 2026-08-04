@@ -51,9 +51,16 @@ cross-run memory, and every velocity signal in the system is a diff against them
 Popularity is measured by **sell-through** (stock dropping over time), because
 `products.json` has no bestseller rank — `sort_by` is silently ignored.
 
-Every phase is **fail-soft**: `run_tracker.sh` logs a failure and continues, and downstream
-sections are omitted rather than faked. A Google Trends or Apify hiccup must never block
-the report.
+Every phase is **fail-soft but never silent**: `run_tracker.sh` records each failure,
+mails an alert (`send_email.py --alert`), and exits with the failure count. A Google Trends
+or Apify hiccup must never block the report — but it must never be invisible either. Ten
+runs once "succeeded" while delivering 2 of 10 reports and fabricating a week of history
+(handoff §14). When adding a phase, give it a non-zero exit on failure.
+
+**Never let a phase substitute stale data for missing data.** Tools that default to "the
+newest matching file" must verify its date matches the run date; `update_catalog.py`
+refuses a mismatch, and `run_tracker.sh` passes `--run-date` explicitly so it can. A week
+recorded from last week's file is worse than a week recorded as missing.
 
 ## Tuning knobs
 

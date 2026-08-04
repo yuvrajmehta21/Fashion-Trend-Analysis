@@ -4,9 +4,10 @@ _Last updated: 2026-08-04. This is the single source of truth for picking the pr
 cold. Read top-to-bottom once, then use the file-by-file reference as needed. Standing
 operational facts live in `CLAUDE.md`, not here._
 
-> ⚠️ **Stale-state notice (2026-08-04):** the narrative below was written on 2026-06-04 and
-> has not been re-verified since. The droplet has presumably run its weekly cron ~8 times.
-> **Before trusting any "how much data do we have" claim, check the droplet**, not this file.
+> **Start at §14 (2026-08-04 audit).** The droplet ran 10 weekly crons between 2026-06-04
+> and 08-03 and reported all 10 as successes. It was not. §14 is what actually happened,
+> what was fixed, and what is still unproven. Sections 1–13 describe the design and remain
+> accurate; §2's "DONE & working" list predates the audit and should be read through it.
 
 ---
 
@@ -28,7 +29,7 @@ Agent" (borrowed its *shape* — polite scraping, dated JSON in `.tmp/`, the edi
 builder — but shares no code).
 
 - **Repo:** https://github.com/yuvrajmehta21/Fashion-Trend-Analysis (PUBLIC, branch `main`)
-- **Latest commit:** `5dcf004` (pin transformers<5 / pandas<3) — see §12
+- **Latest commit:** `012fb60` (stop the pipeline reporting failures as success) — see §12/§14
 - **Local path:** `/Users/yuvrajmehta/Desktop/Automations/Fashion Trend Analysis`
 - **Owner email (reports):** yuvrajmehta05@gmail.com (sent from yuvrajmehta2107@gmail.com)
 - Deployment coordinates, the schedule, tuning knobs and standing warnings live in
@@ -48,7 +49,8 @@ builder — but shares no code).
 - **FashionCLIP** garment tagging, **local & free** (no API key).
 - **Sell-through** popularity signal (stock tracked over time).
 - **Google Trends** search-interest signal (free, fail-soft).
-- **Cross-source corroboration** (search ⨯ catalog).
+- **Cross-source corroboration** (search ⨯ catalog ⨯ social) — ⚠️ **produced 0 results in
+  its first 10 weeks; the gate was unreachable.** Fixed 2026-08-04, unproven live. See §14.
 - **Editorial PDF report** in Style Island's brand palette, 6 sections.
 - **Style Island brand profile** + **competitor research** docs.
 - **Instagram layer Phase 1**: source list + scraper *scaffold* + executive doc.
@@ -64,9 +66,11 @@ builder — but shares no code).
   412, Azurina 233, Label by Mohita 117; **Saaki skipped — robots.txt disallows
   /products.json**). `data/catalog.json` now holds this baseline. A complete **21-page
   retail+social PDF** was generated and verified page-by-page (`.tmp/trend_report_2026-06-04.pdf`).
-- **DEPLOYED & SCHEDULED** (2026-06-04): running on DigitalOcean droplet `139.59.34.167`,
-  **weekly cron Mon 06:00 IST**, with **email delivery** to yuvrajmehta05@gmail.com
-  (`send_email.py`, Gmail SMTP_SSL). Smoke-tested + baseline run on the droplet. See §13.
+- **DEPLOYED & SCHEDULED** (2026-06-04): weekly cron on the droplet with email delivery.
+  See `CLAUDE.md` for coordinates, §13 for the rationale. ⚠️ **Delivery silently failed for
+  8 of its first 10 weeks** — see §14.
+- **10 weekly runs banked, 9 honest** (the 10th was fabricated and has been purged; one
+  more, 2026-07-06, is a partial). Catalog holds 2,549 items. Social has 10 snapshots.
 
 ### 🚧 IN PROGRESS / BLOCKED
 - **Awaiting executives' list** of brands/accounts/influencers they most want monitored
@@ -396,6 +400,7 @@ Instagram Graph API can't see competitor/influencer posts (kills the trend-leade
 - `78522a3` Fix baseline-run bugs from the first full retail run
 - `3f8699e` Add email delivery + droplet deployment guide
 - `5dcf004` Pin transformers<5 / pandas<3 (5.x broke FashionCLIP)
+- `012fb60` Stop the pipeline reporting failures as success (the §14 audit fixes)
 
 ---
 
@@ -418,3 +423,94 @@ Instagram Graph API can't see competitor/influencer posts (kills the trend-leade
   behind `REPORT_SHARING_ENABLED` so a test run on any machine can't mail the owner.
 - **Cost:** droplet already owned + Apify ~$2.86/mo (inside the free $5) ≈ negligible.
 - **Pause it** by commenting the Style Island crontab line (leave Bestseller's intact).
+
+---
+
+## 14. The 2026-08-04 audit — what 10 "successful" runs were really doing
+
+Two months after deployment nobody had looked at the output. Cron had run 10/10 Mondays
+without a miss, every run exited 0, and the project looked healthy. It wasn't. Three
+independent failures had been running the whole time, each one logged and swallowed.
+
+**This is the single most important lesson in the project: `fail-soft` without alerting
+converts loud failures into silent ones.** Every guard added on 2026-08-04 exists because
+of that. The pipeline is still fail-soft — a Google hiccup still must not block the report
+— but it can no longer *lie* about it.
+
+### What was actually broken
+
+**1. The owner received 2 of 10 reports.** Every run from 06-04 to 07-20 died at the email
+phase with `[Errno 101] Network is unreachable` — a transient droplet network drop, caught
+by a bare `except`, logged, exit 0. It started working again on its own for 07-27 and
+08-03. Cause of the eight-week outage never established; it predates the retry logic, so
+we can't tell in hindsight how many of those would have survived a second attempt.
+
+**2. The 2026-08-03 run recorded a week that never happened.** All 7 stores returned `429`
+in the same minute. The scrape banked 0 products → `tag_garments.py` wrote no file →
+`update_catalog.py`'s "newest `tagged_*.json`" default silently picked up **the previous
+week's file** and stamped 2,352 items as seen live on 08-03. That poisoned `seen_dates`,
+`stock_history` and `last_seen` for every item, flatlined sell-through, and the report
+then announced "0 new, 0 selling through" as if it were a market finding. It was one of
+only two reports that reached the owner. **Purged 2026-08-04** (backup kept on the droplet
+at `data/catalog.json.before-purge-2026-08-03`); the catalog now holds 9 honest runs.
+2026-07-06 was separately degraded — 503s cost 4 of 7 stores, banking 760 items instead of
+~2,370, which distorts the 07-06 and 07-13 deltas. Left in place, flagged here.
+
+**3. Cross-source corroboration had never fired — and could not.** Zero corroborated
+trends in 10 weeks. Not bad luck, arithmetic:
+
+- `google_trends.py` read current interest from `vals[-1]`, the final bucket of a `today
+  3-m` **daily** series. That bucket is Google's still-accumulating partial day, so it read
+  **0 on 87% of all readings (117/135)** — and dragged down the 14-day mean behind
+  `velocity` too.
+- `analyze_trends.py` gated `search_rising` on `interest >= 10`, so with interest pinned at
+  0 it was permanently `False`.
+- `corroborated` was `search_rising AND (catalog OR social)`. A permanently-false term in a
+  conjunction makes the whole feature unreachable.
+
+So in weeks where catalog and social independently agreed (`signals: 2`), the verdict was
+still "not corroborated". The flagship deliverable — *catch 1–2 trends per season early* —
+produced nothing for two months while looking like it was working.
+
+### What changed (commit `012fb60`)
+
+| Fix | Where |
+|---|---|
+| Refuse an input whose date ≠ run date; refuse a 0-product input | `update_catalog.py` |
+| Drop `isPartial` rows; average a 7-day window; bounded trailing-zero strip | `google_trends.py` |
+| Gate on the `low_volume` flag, not a re-derived `interest >= 10` | `analyze_trends.py` |
+| `corroborated` = **any 2 of 3** sources agree (search is a vote, not a veto) | `analyze_trends.py` |
+| Retry 429/5xx with backoff + `Retry-After`; exit 2 (total) / 3 (partial) | `scrape_catalog.py` |
+| SMTP retries; non-zero exit on failure; new `--alert` mode | `send_email.py` |
+| Skip tag/catalog on a dead scrape; skip analyze/PDF/email on an unbanked week; collect failures, mail an alert, propagate exit status | `run_tracker.sh` |
+
+The last one matters as much as the guards: `analyze_trends.py` defaults to the *latest*
+run in the catalog, so on a week that wasn't banked it would happily rebuild last week's
+figures under today's date — the same lie in a different phase.
+
+### Deliberate judgement calls (revert these if you disagree)
+
+- **`corroborated` = 2-of-3 is a semantic loosening, not a bug fix.** The old rule made
+  Google Trends a single point of failure for a feature it structurally cannot support in
+  this market (niche English style terms in India are genuinely low-volume — see §10). If
+  you want search back as a hard requirement, it's one line in `analyze_trends.py`.
+- **A failed retail scrape now costs the whole weekly report,** including the social half
+  that may have succeeded. Chosen because a report mixing this week's social with last
+  week's retail under one date is worse than no report. Social is still banked to
+  `data/social_history.json` and shows up in the next good report.
+
+### Still unproven / open
+
+- **The Trends fix is unit-verified, not live-verified.** Google was 429-ing both the
+  laptop and the droplet on 2026-08-04, so no real series could be pulled to confirm the
+  `isPartial` filter against live data. The unit tests cover the partial-bucket case and
+  the regressions (genuine low-volume, genuine collapse) — but **confirm against a real
+  pull before trusting the first corroborated trend it reports.**
+- **Google Trends may be a dead end regardless.** It 429'd two different IPs on the same
+  day, and 87% of its historical readings here were unusable. If it stays unreliable,
+  the honest move is to drop the search layer and lean on catalog ⨯ social, rather than
+  keep a signal that mostly contributes noise.
+- **Whether the 429s recur.** The retry/backoff is patient (20/40/80/160s) but untested
+  against a real Shopify throttle. Watch the first few Mondays.
+- **The 07-06 partial week** is still in the catalog and skews two weeks of deltas.
+
