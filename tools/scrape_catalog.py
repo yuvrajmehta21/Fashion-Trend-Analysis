@@ -30,7 +30,10 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import shutil
+import subprocess
 import sys
+import tempfile
 import time
 from datetime import date
 from pathlib import Path
@@ -194,43 +197,91 @@ def normalise_product(p: dict, store: dict, currency: tuple[str, str]) -> dict:
 # Fetching
 # ---------------------------------------------------------------------------
 
-# Shopify's edge throttles datacenter IPs. On 2026-08-03 all 7 stores returned 429 in
-# the same minute and the run banked an empty scrape; 2026-07-06 lost 4 stores to 503s.
-# A single request attempt is not enough from the droplet.
+# --- Why this module fetches catalogs with curl, not requests --------------------------
+# Shopify's edge fingerprints the HTTP client and blocks python-requests outright.
+# Measured on the droplet 2026-08-04, same IP, same URL, seconds apart:
+#     curl              -> 200
+#     python-requests   -> 429   (twice, either side of the curl call)
+# It is not headers: five header sets were tried (the scraper's own, curl-like Accept,
+# Accept-Encoding: identity, a full browser set, and literally `User-Agent: curl/8.5.0`)
+# and all five got 429 from requests. What differs is Python's TLS/HTTP stack, which we
+# cannot change from inside requests. curl ships on both macOS and the Ubuntu droplet,
+# and at ~30 catalog requests a week the subprocess cost is irrelevant.
+#
+# This is what caused the 2026-08-03 empty scrape and the 07-06 partial, and it silently
+# cost the project weeks of data. If catalogs start 429ing again, re-run that comparison
+# FIRST — the answer is a transport question, not a politeness question.
 RETRY_STATUSES = {429, 500, 502, 503, 504}
 FETCH_RETRIES = 4
 RETRY_BACKOFF = 20        # seconds: 20, 40, 80, 160 — deliberately patient, we run weekly
 MAX_RETRY_AFTER = 300     # cap on an honoured Retry-After header
+CURL = shutil.which("curl")
 
 
-def _get_with_retry(url: str) -> requests.Response:
-    """GET with backoff on throttle/5xx. Honours Retry-After when the server sends it.
-    Raises the last error if every attempt fails, so the caller can fail that store."""
-    last_exc = None
+class FetchError(Exception):
+    """A catalog page could not be fetched (after retries)."""
+
+
+def _curl_once(url: str) -> tuple[int, bytes, dict]:
+    """One GET via the curl binary. Returns (status, body, headers)."""
+    with tempfile.TemporaryDirectory() as td:
+        body_path = Path(td) / "body"
+        hdr_path = Path(td) / "hdr"
+        cmd = [CURL, "-sS", "--compressed", "--max-time", "45",
+               "-o", str(body_path), "-D", str(hdr_path),
+               "-w", "%{http_code}"]
+        for k, v in HEADERS.items():
+            cmd += ["-H", f"{k}: {v}"]
+        cmd.append(url)
+        proc = subprocess.run(cmd, capture_output=True, text=True)
+        if proc.returncode != 0:
+            raise FetchError(f"curl exit {proc.returncode}: {proc.stderr.strip()[:200]}")
+        try:
+            status = int((proc.stdout or "").strip()[-3:])
+        except ValueError:
+            raise FetchError(f"could not parse curl status from {proc.stdout!r}")
+        headers = {}
+        if hdr_path.exists():
+            for line in hdr_path.read_text(errors="replace").splitlines():
+                if ":" in line:
+                    k, v = line.split(":", 1)
+                    headers[k.strip().lower()] = v.strip()
+        body = body_path.read_bytes() if body_path.exists() else b""
+        return status, body, headers
+
+
+def _get_json_with_retry(url: str) -> dict:
+    """Fetch a JSON endpoint with backoff on throttle/5xx. Raises FetchError if every
+    attempt fails, so the caller can fail that store rather than bank a partial run."""
+    if not CURL:
+        raise FetchError("curl not found on PATH — required to fetch Shopify catalogs "
+                         "(python-requests is fingerprinted and blocked; see module notes)")
+    last = None
     for attempt in range(1, FETCH_RETRIES + 1):
         try:
-            r = requests.get(url, headers=HEADERS, timeout=30)
-            if r.status_code in RETRY_STATUSES and attempt < FETCH_RETRIES:
+            status, body, headers = _curl_once(url)
+            if status in RETRY_STATUSES and attempt < FETCH_RETRIES:
                 wait = RETRY_BACKOFF * (2 ** (attempt - 1))
                 try:
-                    wait = min(int(r.headers.get("Retry-After", wait)), MAX_RETRY_AFTER)
+                    wait = min(int(headers.get("retry-after", wait)), MAX_RETRY_AFTER)
                 except (TypeError, ValueError):
                     pass
-                print(f"      ! {r.status_code} — retry {attempt}/{FETCH_RETRIES - 1} in {wait}s")
+                print(f"      ! {status} — retry {attempt}/{FETCH_RETRIES - 1} in {wait}s")
                 time.sleep(wait)
                 continue
-            r.raise_for_status()
-            return r
-        except requests.RequestException as e:
-            last_exc = e
+            if status >= 400:
+                raise FetchError(f"HTTP {status} for {url}")
+            return json.loads(body.decode("utf-8", errors="replace"))
+        except FetchError as e:
+            last = e
             if attempt >= FETCH_RETRIES:
                 break
             wait = RETRY_BACKOFF * (2 ** (attempt - 1))
-            print(f"      ! {e.__class__.__name__} — retry {attempt}/{FETCH_RETRIES - 1} in {wait}s")
+            print(f"      ! {e} — retry {attempt}/{FETCH_RETRIES - 1} in {wait}s")
             time.sleep(wait)
-    if last_exc:
-        raise last_exc
-    raise requests.RequestException(f"exhausted retries for {url}")
+        except json.JSONDecodeError as e:
+            raise FetchError(f"invalid JSON from {url}: {e}")
+    raise last or FetchError(f"exhausted retries for {url}")
 
 
 def fetch_products(base_url: str, collection: str | None, limit: int | None) -> list[dict]:
@@ -244,8 +295,7 @@ def fetch_products(base_url: str, collection: str | None, limit: int | None) -> 
     page = 1
     while True:
         url = f"{endpoint}?limit={PAGE_SIZE}&page={page}"
-        r = _get_with_retry(url)
-        batch = r.json().get("products", [])
+        batch = _get_json_with_retry(url).get("products", [])
         if not batch:
             break
         out.extend(batch)
