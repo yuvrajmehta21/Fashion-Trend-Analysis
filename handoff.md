@@ -446,6 +446,7 @@ by a bare `except`, logged, exit 0. It started working again on its own for 07-2
 we can't tell in hindsight how many of those would have survived a second attempt.
 
 **2. The 2026-08-03 run recorded a week that never happened.** All 7 stores returned `429`
+(root cause below — it was never a rate limit)
 in the same minute. The scrape banked 0 products → `tag_garments.py` wrote no file →
 `update_catalog.py`'s "newest `tagged_*.json`" default silently picked up **the previous
 week's file** and stamped 2,352 items as seen live on 08-03. That poisoned `seen_dates`,
@@ -480,7 +481,7 @@ produced nothing for two months while looking like it was working.
 | Drop `isPartial` rows; average a 7-day window; bounded trailing-zero strip | `google_trends.py` |
 | Gate on the `low_volume` flag, not a re-derived `interest >= 10` | `analyze_trends.py` |
 | `corroborated` = **any 2 of 3** sources agree (search is a vote, not a veto) | `analyze_trends.py` |
-| Retry 429/5xx with backoff + `Retry-After`; exit 2 (total) / 3 (partial) | `scrape_catalog.py` |
+| **Fetch `products.json` via the `curl` binary** (`requests` is fingerprinted → 429); retry 429/5xx with backoff; exit 2 (total) / 3 (partial) | `scrape_catalog.py` |
 | SMTP retries; non-zero exit on failure; new `--alert` mode | `send_email.py` |
 | Skip tag/catalog on a dead scrape; skip analyze/PDF/email on an unbanked week; collect failures, mail an alert, propagate exit status | `run_tracker.sh` |
 
@@ -501,16 +502,49 @@ figures under today's date — the same lie in a different phase.
 
 ### Still unproven / open
 
-- **The Trends fix is unit-verified, not live-verified.** Google was 429-ing both the
-  laptop and the droplet on 2026-08-04, so no real series could be pulled to confirm the
-  `isPartial` filter against live data. The unit tests cover the partial-bucket case and
-  the regressions (genuine low-volume, genuine collapse) — but **confirm against a real
-  pull before trusting the first corroborated trend it reports.**
+- **The Trends fix is live-verified, partially.** A 2026-08-04 run got 5 of 15 keywords
+  through (the rest 429'd) and they returned real values — `maxi dress` interest 32
+  (+4%), `jumpsuit` 20 (+7%), `kaftan` 16 (−10%) — where the old `vals[-1]` code read 0.
+  That is the bug fixed against live data. The other 10 keywords remain unconfirmed.
 - **Google Trends may be a dead end regardless.** It 429'd two different IPs on the same
-  day, and 87% of its historical readings here were unusable. If it stays unreliable,
-  the honest move is to drop the search layer and lean on catalog ⨯ social, rather than
-  keep a signal that mostly contributes noise.
-- **Whether the 429s recur.** The retry/backoff is patient (20/40/80/160s) but untested
-  against a real Shopify throttle. Watch the first few Mondays.
+  day, only 5/15 keywords got through even on the good attempt, and 87% of its historical
+  readings here were unusable. If it stays this unreliable, the honest move is to drop the
+  search layer and lean on catalog ⨯ social rather than keep a signal that mostly
+  contributes noise. **This is the main open product decision.**
 - **The 07-06 partial week** is still in the catalog and skews two weeks of deltas.
+
+### The 429s: root cause found (and two wrong theories on the way)
+
+Worth reading as a method lesson — the first two explanations were plausible, cheap to
+believe, and both wrong. Only a controlled A/B settled it.
+
+1. *"Shopify throttles datacenter IPs."* → added in-request retry/backoff. Wrong: the
+   laptop got 429s too, and `Retry-After` pinned every attempt at 60s, so four attempts
+   bought three minutes.
+2. *"It's a rate-limit window longer than the retry budget."* → added a 45-minute
+   run-level retry (`SCRAPE_RETRY_WAIT`). Also wrong — and it looked right because a
+   `curl` probe minutes after a failed run returned 200. Two variables had changed at
+   once (time *and* client) and I credited the wrong one.
+3. **Actual cause: Shopify's edge fingerprints the HTTP client.** Same droplet, same IP,
+   same URL, seconds apart:
+
+   ```
+   curl              -> 200
+   python-requests   -> 429   (twice, either side of the curl call)
+   ```
+
+   Five header sets were then tried from `requests` — the scraper's own, curl-like
+   `Accept: */*`, `Accept-Encoding: identity`, a full browser set, and literally
+   `User-Agent: curl/8.5.0` — and **all five got 429**. What is fingerprinted is Python's
+   TLS/HTTP stack, which cannot be changed from inside `requests`.
+
+**Fix:** `products.json` is fetched with the `curl` binary (`_get_json_with_retry` in
+`scrape_catalog.py`), keeping the same retry/backoff and `Retry-After` handling.
+`meta.json` and `robots.txt` stay on `requests` — both kept working right through the
+outage, so they are not behind the same protection.
+
+**If catalogs start 429ing again, run the curl-vs-requests A/B FIRST.** It is a transport
+question, not a politeness question; no amount of backoff or header tuning moves it. The
+run-level retry stays as cheap insurance but was built on theory 2 and is not what makes
+the scrape work.
 

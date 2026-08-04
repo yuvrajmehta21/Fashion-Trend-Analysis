@@ -91,6 +91,12 @@ Full setup steps and droplet-sizing rationale: `DEPLOY.md`.
 
 ## Standing warnings
 
+- **Fetch `products.json` with `curl`, never `python-requests`.** Shopify's edge
+  fingerprints the client: same IP, same URL, same headers, seconds apart — curl 200,
+  requests 429. Five header sets were tested, including `User-Agent: curl/8.5.0`; all
+  failed. This silently cost weeks of data. If catalogs 429 again, run that A/B first —
+  it is a transport question, not a politeness question. (`meta.json`/`robots.txt` are
+  fine on requests; they were never blocked.)
 - **`data/` is per-host and gitignored** — the laptop's copy and the droplet's diverge as
   soon as cron runs. The droplet's is the live one. Never judge how much history exists
   (and never debug a velocity signal) from the local copy.
