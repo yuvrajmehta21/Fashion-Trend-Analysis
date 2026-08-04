@@ -322,18 +322,22 @@ def download_image(image_url: str, dest: Path) -> bool:
         return False
 
 
-def scrape_store(store: dict, limit: int | None) -> list[dict]:
+def scrape_store(store: dict, limit: int | None) -> tuple[list[dict], str | None]:
+    """Returns (products, skip_reason). A skip_reason means we chose not to scrape this
+    store — that is policy working as intended, NOT a failure, and must not raise an
+    alert. Saaki disallows /products.json in robots.txt and would otherwise have fired a
+    'degraded run' alert every single week; weekly false alarms are how alerting dies."""
     base = store["base_url"]
     print(f"\n→ {store['name']} ({base})")
 
     if store.get("platform") != "shopify":
         print(f"   skip — unsupported platform {store.get('platform')!r}")
-        return []
+        return [], "unsupported platform"
 
     # Politeness: confirm robots.txt permits the catalog endpoint.
     if not robots_allows(base, "/products.json"):
         print("   skip — robots.txt disallows /products.json")
-        return []
+        return [], "robots.txt disallows /products.json"
 
     currency = fetch_currency(base)
     print(f"   currency: {currency[0] or 'unknown'}")
@@ -365,7 +369,7 @@ def scrape_store(store: dict, limit: int | None) -> list[dict]:
             prod["image_local"] = str(local.relative_to(ROOT))
         time.sleep(0.2)   # gentle pacing on the CDN too
 
-    return products
+    return products, None
 
 
 # ---------------------------------------------------------------------------
@@ -402,10 +406,10 @@ def main():
     all_products: list[dict] = []
     store_summaries = []
     for store in selected:
-        prods = scrape_store(store, args.limit)
+        prods, skip_reason = scrape_store(store, args.limit)
         all_products.extend(prods)
         store_summaries.append({"key": store["key"], "name": store["name"],
-                                "count": len(prods)})
+                                "count": len(prods), "skipped": skip_reason})
 
     out = {
         "scraped_date": TODAY,
@@ -415,21 +419,26 @@ def main():
     out_file = TMP / f"scraped_{TODAY}.json"
     out_file.write_text(json.dumps(out, indent=2, ensure_ascii=False))
 
-    print(f"\nDone — {len(all_products)} products from {len(selected)} stores.")
+    attempted = [s for s in store_summaries if not s["skipped"]]
+    print(f"\nDone — {len(all_products)} products from {len(attempted)} stores "
+          f"({len(store_summaries) - len(attempted)} skipped by policy).")
     for s in store_summaries:
-        print(f"   {s['name']}: {s['count']}")
+        note = f"  (skipped — {s['skipped']})" if s["skipped"] else ""
+        print(f"   {s['name']}: {s['count']}{note}")
     print(f"Saved → {out_file}")
 
     # Signal degraded scrapes to the orchestrator. Downstream phases treat a thin week
-    # as real market movement, so a partial scrape must be loud, not silent.
-    empty = [s for s in store_summaries if not s["count"]]
+    # as real market movement, so a partial scrape must be loud, not silent — but only
+    # stores we actually ATTEMPTED can count as failures. Policy skips are expected.
+    failed = [s for s in attempted if not s["count"]]
     if not all_products:
-        print("\nFAILED — every store returned 0 products. This is an outage, not an "
-              "empty market; downstream phases must not treat it as a week of data.")
+        print("\nFAILED — every store we attempted returned 0 products. This is an "
+              "outage, not an empty market; downstream phases must not treat it as a "
+              "week of data.")
         return 2
-    if empty:
-        print(f"\nDEGRADED — {len(empty)}/{len(selected)} stores returned nothing: "
-              f"{', '.join(s['key'] for s in empty)}")
+    if failed:
+        print(f"\nDEGRADED — {len(failed)}/{len(attempted)} attempted stores returned "
+              f"nothing: {', '.join(s['key'] for s in failed)}")
         return 3
     return 0
 
