@@ -513,6 +513,33 @@ figures under today's date — the same lie in a different phase.
   contributes noise. **This is the main open product decision.**
 - **The 07-06 partial week** is still in the catalog and skews two weeks of deltas.
 
+### Verification run — 2026-08-04, full pipeline, end to end
+
+Run in a throwaway clone (`/root/fta-verify`) seeded with a **copy** of production
+history, so a failed test could not damage real data. Result: **clean**.
+
+- Scrape **2,250 products from 6 stores** over the new curl transport (Saaki skipped by
+  robots.txt, as designed). FashionCLIP tagged all 2,250.
+- Catalog: **27 new, 2,223 returning → 2,576 items.** Real deltas against 07-27:
+  23 items selling through; social emerging `co-ord set +28%`, `white +16%`,
+  `textured +11%`.
+- **PDF: 18 pages, verified page-by-page as PNG** (cards, images, prices, sold-out
+  badges, share bars, low-base flags — no overflow).
+- **Report email delivered with a 15.8 MB attachment** — the exact path that failed
+  eight times in June/July. The failure alert also delivered.
+- Google Trends returned 0/15 (429) → exited 1, **left `keywords.json` untouched** rather
+  than banking zeros. Correct behaviour, and the reason the alert fired.
+
+The run was then **promoted into production** (`data/catalog.json`, backup at
+`data/catalog.json.before-promote-2026-08-04`), so the catalog holds a recent comparison
+point instead of a two-week gap. Revert with the same purge approach used for 08-03.
+
+**One false alarm found and fixed by this run:** Saaki, skipped on purpose by robots.txt,
+was counted as a failed store → `DEGRADED` → an alert *every week forever* for correct
+behaviour. `scrape_store` now returns a skip reason and only attempted stores count
+toward the failure exit codes. Weekly false alarms are how alerting dies, which would
+have quietly re-created the original problem.
+
 ### The 429s: root cause found (and two wrong theories on the way)
 
 Worth reading as a method lesson — the first two explanations were plausible, cheap to
