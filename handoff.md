@@ -540,6 +540,38 @@ behaviour. `scrape_store` now returns a skip reason and only attempted stores co
 toward the failure exit codes. Weekly false alarms are how alerting dies, which would
 have quietly re-created the original problem.
 
+### 2026-08-10 — first fully clean scheduled run, and the corroboration over-fire
+
+The first cron run with every fix in place completed **clean: no failures, no alert, no
+false alarm**. 2,287 products / 6 stores, 67 new, 20 selling through, 186 social posts,
+report delivered unaided. **Google Trends returned 15/15 keywords with only 2 zero
+readings** — the partial-bucket fix is now conclusively verified in production (87% of
+readings were zero before it).
+
+But the report claimed **7 corroborated cross-source trends**, and three of them had
+social engagement *falling* 7–10% while being counted as agreement.
+
+**Cause:** `catalog_rising` was `catalog_delta > 0 OR in_sellthrough`. `in_sellthrough`
+is a membership test against an attribute's top-6 values, and `dress` is the commonest
+`garment_type`, so it is in that list every single week. **10 of the 12 keywords map to
+`garment_type: dress`**, so the catalog vote was a constant `True` and the 2-of-3 rule
+degenerated into "search OR social rose" — one signal wearing a second signal's hat.
+
+**Fix:** the catalog vote now requires a real share gain. Sell-through keeps its own
+report section; in cross-source it is context, not evidence. Re-run against the same real
+data: **7 → 1** (`satin dress`, the only term where all three sources genuinely agree —
+search +10% at real volume, catalog +0.002, social +0.001).
+
+⚠️ **This rule has now been wrong in both directions**, and both looked like a working
+feature from the outside: first it could never fire (search held a veto), then it fired
+constantly (a constant standing in for a vote). **Whenever you touch it, print the
+per-term votes and read them** — the corroborated *count* tells you nothing about whether
+the rule is sound.
+
+⚠️ **Catalog share deltas are tiny** (+0.002 = 0.2pp on a 2,287-item catalog), so a
+corroborated trend is a *real* signal, not a *strong* one. The PDF renders it as
+"catalog +0%". Don't oversell these to the owner.
+
 ### The 429s: root cause found (and two wrong theories on the way)
 
 Worth reading as a method lesson — the first two explanations were plausible, cheap to
