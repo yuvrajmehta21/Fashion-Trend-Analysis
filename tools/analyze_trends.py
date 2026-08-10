@@ -353,7 +353,16 @@ def main():
             sm = social_index.get((attr, val))
             if sm and (social_delta is None or sm["delta"] > social_delta):
                 social_delta = sm["delta"]
-        catalog_rising = (catalog_delta is not None and catalog_delta > 0) or in_sellthrough
+        # The catalog vote requires a real SHARE GAIN, not mere presence in the
+        # sell-through list. `in_sellthrough` is a membership test against the top-6
+        # values of an attribute — and `dress` is the commonest garment_type, so it sits
+        # in that list every single week. 10 of our 12 keywords map to garment_type:
+        # dress, so allowing sell-through to satisfy this made the catalog vote a
+        # constant `True`, and the 2-of-3 rule collapsed into "search OR social rose".
+        # On 2026-08-10 that produced 7 "corroborated" trends including three whose
+        # social engagement was FALLING 7–10% — contradiction counted as agreement.
+        # Sell-through keeps its own report section; it is context here, not evidence.
+        catalog_rising = catalog_delta is not None and catalog_delta > 0
         social_rising = social_delta is not None and social_delta > 0
         # Count agreeing signals; the more sources point the same way, the higher confidence.
         signals = sum([bool(search_rising), bool(catalog_rising), bool(social_rising)])
@@ -370,13 +379,16 @@ def main():
             "catalog_rising":  catalog_rising,
             "social_rising":   social_rising,
             "signals":         signals,
-            # corroborated = ANY TWO of the three independent sources agree.
+            # corroborated = ANY TWO of the three independent sources agree, where each
+            # vote must be a real movement (see catalog_rising above).
             #
-            # This used to require search AND (catalog OR social), which made Google
-            # Trends a single point of failure for the whole feature. Trends is thin for
-            # niche English style terms in India (most read low-volume by design), so
-            # weeks where catalog and social independently agreed were still reported as
-            # uncorroborated. Search is one vote now, not a veto.
+            # History, because this has been wrong in both directions: it originally
+            # required search AND (catalog OR social), which made Google Trends a veto
+            # over a feature it structurally cannot support in this market — 0 hits in
+            # 10 weeks. Loosening it to 2-of-3 fixed that but left the catalog vote
+            # satisfiable by sell-through membership, which is true every week — 7 hits
+            # in one week, several self-contradictory. Both failure modes look like a
+            # working feature from the outside; only reading the per-term votes shows it.
             "corroborated":    signals >= 2,
         })
     # most agreeing signals first, then corroborated, then by search velocity
